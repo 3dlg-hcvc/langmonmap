@@ -821,7 +821,7 @@ class HabitatMultiEvaluator:
 
             # save final sim to image file
             if self.save_video:
-                generate_video(video_dir=f"{self.results_path}/videos", video_name=f"{episode.episode_id}__{result.name}", images=rgb_frames)
+                generate_video(video_dir=f"{self.results_path}/videos", video_name=f"{episode.episode_id}_{seq_id}__{result.name}", images=rgb_frames)
                 rgb_frames = []
 
             print(f"Overall progress: {sum([m.get_progress() for m in results]) / (n_eps)}, per object: ")
