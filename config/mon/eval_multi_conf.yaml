@@ -1,0 +1,39 @@
+EvalConf:
+  multi_object: True
+  max_steps: 1500
+  max_explore_steps: 1200
+  max_dist: 1.5
+  is_gibson: False
+  object_nav_path: "datasets/multiobject_episodes/"
+  scene_path: "datasets/scene_datasets/"
+  results_path: "results_onemap_multion_mlsfm/"
+  log_rerun: False
+  save_video: True
+  use_pointnav: False
+  square_im: True
+  goal_query_type: "detailed" # "coarse", "fine", "detailed"
+  goal_query_processing: "extract"
+
+config: [
+  ./controller_habitat.yaml, # Default Habitat Controller
+  ./mapping_conf_sim.yaml,       # Default Mapping Configuration
+  ./planning_conf.yaml       # Default Planning Configuration
+]
+
+MappingConf:
+  layered: True
+  z_bins_lower: -0.8
+  z_bins_upper: 1.5
+  z_bins_step: 0.6
+  blur_kernel_size: 0.05  # in meters 0.5 default
+  obstacle_map_threshold: 0.4 # in occupancy value
+  obstacle_min: -0.6
+  obstacle_max: 0.5
+  floor_level: -0.88
+  floor_threshold: -1.1
+
+PlanningConf:
+  frontier_depth: 2.5  # in meters  [in navigator.py]
+  max_detect_distance: 0.8 # [in navigator.py]
+  obstcl_kernel_size: 0.5 # [in navigator.py]
+  min_goal_dist: 0.7 # [in navigator.py]

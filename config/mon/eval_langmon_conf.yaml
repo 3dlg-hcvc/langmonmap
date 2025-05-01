@@ -1,0 +1,27 @@
+EvalConf:
+  multi_object: True
+  max_steps: 1500
+  max_explore_steps: 1200
+  max_dist: 1.5
+  is_gibson: False
+  object_nav_path: "datasets/langmon/minival_full/minival/"
+  scene_path: "datasets/scene_datasets/fphab/"
+  results_path: "results_onemap_multion_mlsfm/"
+  log_rerun: True
+  save_video: False
+  use_pointnav: False
+  square_im: True
+  goal_query_type: "detailed" # "coarse", "fine", "detailed"
+  goal_query_processing: "extract"
+
+config: [
+  ./controller_habitat.yaml, # Default Habitat Controller
+  ./mapping_conf_sim.yaml,       # Default Mapping Configuration
+  ./planning_conf.yaml       # Default Planning Configuration
+]
+
+MappingConf:
+  layered: True
+  z_bins_lower: -1.4
+  z_bins_upper: 1.0
+  z_bins_step: 0.8

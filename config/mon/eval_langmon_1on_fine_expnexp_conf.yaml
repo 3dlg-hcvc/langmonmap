@@ -1,0 +1,21 @@
+EvalConf:
+  multi_object: True
+  max_steps: 1500
+  max_explore_steps: 1200
+  max_dist: 1.5
+  is_gibson: False
+  object_nav_path: "datasets/langmon/langmon/fphab/v0.2/fine"
+  scene_path: "datasets/scene_datasets/fphab/"
+  results_path: "results_langmon_fine_expnexp_rerun/"
+  log_rerun: True
+  save_video: True
+  use_pointnav: False
+  square_im: True
+  goal_query_type: "detailed" # "coarse", "fine", "detailed"
+  goal_query_processing: "extract"
+
+config: [
+  ./controller_habitat.yaml, # Default Habitat Controller
+  ./mapping_conf_sim.yaml,       # Default Mapping Configuration
+  ./planning_conf.yaml       # Default Planning Configuration
+]

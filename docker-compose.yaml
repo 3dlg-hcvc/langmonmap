@@ -1,0 +1,28 @@
+version: "3.9"
+name: "onemap"
+services:
+  onemap:
+    network_mode: "host"
+    environment:
+      - HM3D=${HM3D}
+      - HM3D_PATH=${HM3D_PATH}
+      - MATTERPORT_ID=${MATTERPORT_ID}
+      - MATTERPORT_SECRET=${MATTERPORT_SECRET}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_VISIBLE_DEVICES=all
+    build:
+      context: .
+      args:
+        HM3D: ${HM3D}
+        HM3D_PATH: ${HM3D_PATH} # Passed at build time
+        MATTERPORT_ID: ${MATTERPORT_ID}
+        MATTERPORT_SECRET: ${MATTERPORT_SECRET}
+    deploy:
+      resources:
+        reservations:
+            devices:
+            - driver: "nvidia"
+              count: all
+              capabilities: [gpu]
+    stdin_open: true
+    tty: true

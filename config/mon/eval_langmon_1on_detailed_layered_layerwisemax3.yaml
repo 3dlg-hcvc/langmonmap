@@ -1,0 +1,35 @@
+EvalConf:
+  multi_object: True
+  max_steps: 1500
+  max_explore_steps: 1200
+  max_dist: 1.5
+  is_gibson: False
+  object_nav_path: "datasets/langmon/langmon/fphab/v0.2/detailed_new"
+  num_seq: 1
+  scene_path: "datasets/scene_datasets/fphab/"
+  results_path: "results_langmon_solar/results_langmon_detailed_split_support_layerwisemax_3_map/"
+  log_rerun: False
+  save_video: True
+  save_maps: False
+  use_pointnav: False
+  square_im: True
+  goal_query_type: "detailed" # "coarse", "fine", "detailed"
+  goal_query_processing: "extract_and_split_support" #"extract_and_split_support" #"extract"
+
+config: [
+  ./controller_habitat.yaml, # Default Habitat Controller
+  ./mapping_conf_sim.yaml,       # Default Mapping Configuration
+  ./planning_conf.yaml       # Default Planning Configuration
+]
+
+MappingConf:
+  layered: True
+  z_bins_lower: -1.5
+  z_bins_upper: 1.5
+  z_bins_step: 0.7
+  n_points: 700
+  size: 60
+
+PlanningConf:
+  fuse_similarity: "layerwisemax"
+  use_detector: False

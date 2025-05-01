@@ -1,0 +1,16 @@
+PlanningConf:
+  percentile_exploitation: 99.0  # in percents [in navigator.py]
+  frontier_depth: 5.0 #2.5  # in meters  [in navigator.py]
+  no_nav_radius: 0.9 # in meters  [in navigator.py]
+#  yolo_confidence: 0.5 # [in yolo_world_detector.py]
+  yolo_confidence: 0.6 # [in yolo_world_detector.py]
+  use_detector: True # toggle object detector
+  filter_detections_depth: False # [in navigator.py]
+  consensus_filtering: True # [in navigator.py]  # For ablation. If set to false, the consensus filtering (CF) is disabled
+  allow_replan: True # [in navigator.py]
+  use_frontiers: True # [in navigator.py]
+  allow_far_plan: False # [in navigator.py]
+  using_ov: True # [in navigator.py]
+  max_detect_distance: 1.0 #0.8 # [in navigator.py]
+  obstcl_kernel_size: 0.5 # [in navigator.py]
+  min_goal_dist: 0.7 # [in navigator.py]

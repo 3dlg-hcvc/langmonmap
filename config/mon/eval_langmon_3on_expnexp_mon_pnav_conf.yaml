@@ -1,0 +1,24 @@
+EvalConf:
+  multi_object: True
+  max_steps: 2500
+  max_explore_steps: 2000
+  max_dist: 1.5
+  is_gibson: False
+  object_nav_path: "datasets/langmon/minival_full/minival"
+  num_seq: 3
+  scene_path: "datasets/scene_datasets/fphab/"
+  results_path: "results_langmon_3on_mon_expnexp_pnav/"
+  log_rerun: False
+  save_video: True
+  save_maps: False
+  use_pointnav: True
+  pointnav_ckpt_path: "weights/pointnav/ckpt.140.pth"
+  square_im: True
+  goal_query_type: "detailed" # "coarse", "fine", "detailed"
+  goal_query_processing: "extract"
+
+config: [
+  ./controller_habitat.yaml, # Default Habitat Controller
+  ./mapping_conf_sim.yaml,       # Default Mapping Configuration
+  ./planning_conf.yaml       # Default Planning Configuration
+]
