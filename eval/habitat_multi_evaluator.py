@@ -163,15 +163,11 @@ class HabitatMultiEvaluator:
         backend_cfg.scene_id = self.scene_path + scene_id
 
         backend_cfg.scene_dataset_config_file = self.scene_path + "hm3d/hm3d_annotated_basis.scene_dataset_config.json"
-        backend_cfg.navmesh_settings = habitat_sim.nav.NavMeshSettings()
-        backend_cfg.navmesh_settings.set_defaults()
-        backend_cfg.navmesh_settings.agent_radius = 0.2
-        backend_cfg.navmesh_settings.agent_height = 0.88
 
-        self.hfov = 90 if self.square else 79
+        hfov = 90 if self.square else 79
         rgb = habitat_sim.CameraSensorSpec()
         rgb.uuid = "rgb"
-        rgb.hfov = self.hfov
+        rgb.hfov = hfov
         rgb.position = np.array([0, 0.88, 0])
         rgb.sensor_type = habitat_sim.SensorType.COLOR
         res_x = 640
@@ -180,14 +176,11 @@ class HabitatMultiEvaluator:
 
         depth = habitat_sim.CameraSensorSpec()
         depth.uuid = "depth"
-        depth.hfov = self.hfov
+        depth.hfov = hfov
         depth.sensor_type = habitat_sim.SensorType.DEPTH
         depth.position = np.array([0, 0.88, 0])
         depth.resolution = [res_y, res_x]
-        agent_cfg = habitat_sim.agent.AgentConfiguration(
-            height=0.88,
-            radius=0.2,
-            action_space=dict(
+        agent_cfg = habitat_sim.agent.AgentConfiguration(action_space=dict(
             move_forward=ActionSpec("move_forward", ActuationSpec(amount=0.25)),
             turn_left=ActionSpec("turn_left", ActuationSpec(amount=5.0)),
             turn_right=ActionSpec("turn_right", ActuationSpec(amount=5.0)),
@@ -233,9 +226,11 @@ class HabitatMultiEvaluator:
             self.sim.get_agent(0).set_state(agent_state)
             self.sim.step_physics(self.time_step)
 
-    def read_results(self, path, sort_by, data_pkl=None):
+    def read_results(self, sort_by, data_pkl=None):
         from eval.dataset_utils import gen_multiobject_dataset
         from eval.dataset_utils.object_nav_utils import object_nav_gen
+
+        path = self.results_path
         state_dir = os.path.join(path, 'state')
         state_results = {}
 
@@ -248,7 +243,12 @@ class HabitatMultiEvaluator:
         # Iterate through all files in the state directory
         data = []
         sum_successes = 0
+        sum_spl = []
+        overall_sum_successes = 0
+        sum_progress = []
+        sum_ppl = []
         if data_pkl is None:
+            total_experiments_run = 0
             episodes = []
             scene_data = {}
             valid_start_positions = {}
@@ -269,18 +269,24 @@ class HabitatMultiEvaluator:
                         with open(os.path.join(state_dir, filename), 'r') as file:
                             content = file.read().strip()
 
+                        total_experiments_run += 1
                         # Convert the content to a number (assuming it's a float)
                         state_values = content.split(',')
                         state_values = [int(val) for val in state_values]
                         # Store the result in the dictionary
                         # Create a row for each sequence in the experiment
 
+                        success_for_episode = 0
+                        progress_for_episode = 0.0
+                        ppl_for_episode = []
                         for seq_num, value in enumerate(state_values):
                             spl = 0
                             map_size = 0
                             if value == 1:
+                                progress_for_episode += 1.0
                                 if seq_num == 2:
                                     sum_successes += 1
+                                    success_for_episode = 1
                                 poses = np.genfromtxt(os.path.join(pose_dir, "poses_" + str(experiment_num) + "_" +
                                                                    str(seq_num) + ".csv"), delimiter=",")
                                 if len(poses.shape) == 1:
@@ -318,34 +324,8 @@ class HabitatMultiEvaluator:
                                 if not obj_found:
                                     print(f"Warning: No object found for sequence {seq_num} in experiment {experiment_num}")
                                 spl = min(1.0, 1 * (best_dist/ max(path_length, best_dist)))
-
-                            top_down_map = maps.get_topdown_map(
-                                            sim.pathfinder,
-                                            height=self.episodes[experiment_num].start_position[1],
-                                            map_resolution=512,
-                                            draw_border=True,
-                                        )
-                            # Draw the start position
-                            top_down_map = gen_multiobject_dataset.draw_point(
-                                sim,
-                                top_down_map,
-                                np.array(self.episodes[experiment_num].start_position),
-                                maps.MAP_SOURCE_POINT_INDICATOR,
-                            )
-
-                            # Draw the object goals
-                            object_goals = self.episodes[experiment_num].obj_sequence
-                            top_down_map = gen_multiobject_dataset.draw_point(
-                                sim,
-                                top_down_map,
-                                np.array(self.episodes[experiment_num].best_dist[seq_num][1]),
-                                maps.MAP_TARGET_POINT_INDICATOR,
-                            )
-
-                            # Colorize and save the map
-                            top_down_map = maps.colorize_topdown_map(top_down_map)
-                            map_size = top_down_map.shape[0] * top_down_map.shape[1]
-
+                                ppl_for_episode.append(spl)
+                            
                             optimal_total_path_length = sum([d[0] for d in self.episodes[experiment_num].best_dist])
                             data.append({
                                 'experiment': experiment_num,
@@ -358,12 +338,15 @@ class HabitatMultiEvaluator:
                                 'scene': self.episodes[experiment_num].scene_id
                             })
 
-                            np.savez_compressed(
-                                f"{self.results_path}/saved_maps_gt/{self.episodes[experiment_num].episode_id}_{seq_num}.npz",
-                                gt_topdown_map=top_down_map,
-                                gt_object_goals=object_goals,
-                                experiment_result=data
-                            )
+                        if success_for_episode == 1:
+                            overall_sum_successes += 1
+                            sum_spl.append(np.mean(np.array(ppl_for_episode)))
+                        if progress_for_episode > 0:
+                            sum_progress.append(progress_for_episode/self.num_seq)
+                            sum_ppl.append(np.mean(np.array(ppl_for_episode)))
+                        else:
+                            sum_progress.append(0)
+                            sum_ppl.append(0.0)
 
                         # deltas = poses[1:, :3] - poses[:-1, :3]
                         # distance_traveled = np.linalg.norm(deltas, axis=1).sum()
@@ -385,6 +368,8 @@ class HabitatMultiEvaluator:
                 data = pickle.load(f)
         # data = data[data['experiment'] < 88]
         states = data["state"].unique()
+        total_episodes = total_experiments_run
+        print(f"\nTotal experiments: {total_episodes}. Successful experiments: {sum_successes}. Failed experiments: {total_episodes-sum_successes}.")
         # print(sum_successes/236)
         def has_success(group, seq_id):
             return group[(group['sequence'] == seq_id) & (group['state'] == 1)].shape[0] > 0
@@ -396,6 +381,11 @@ class HabitatMultiEvaluator:
         def calc_spl_per_episode(group):
             spls_per_exp = group.groupby('experiment')['spl'].sum()
             return spls_per_exp
+        
+        def calc_ppl_per_episode(group):
+            spls_per_exp = group.groupby("experiment")["spl"].sum()
+            return spls_per_exp
+
 
         def calculate_percentages(group):
             total = len(group)
@@ -415,6 +405,24 @@ class HabitatMultiEvaluator:
             # result['Average SPL'] = avg_spl
 
             return result
+        
+        def calculate_overall_percentages(group):
+            result = pd.Series(
+                {
+                    Result(state).name: (group["state"] == state).sum() / total_episodes
+                    for state in states
+                }
+            )
+            progress = calc_prog_per_episode(group)
+            ppl = calc_ppl_per_episode(group)
+            s = progress[progress == 1]
+            result["Progress"] = progress.mean()
+            result["PPL"] = ppl.mean()
+            # result["opt_PL"] = group["opt_path"].mean()
+            result["success"] = s.sum() / total_episodes
+            result["SPL"] = ppl[progress == 1].sum() / total_episodes
+
+            return result
 
         # Per-object results
         object_results = data.groupby('object').apply(calculate_percentages).reset_index()
@@ -431,6 +439,13 @@ class HabitatMultiEvaluator:
 
         overall_row = pd.DataFrame([{'Scene': 'Overall'} | overall_percentages.to_dict()])
         scene_results = pd.concat([overall_row, scene_results], ignore_index=True)
+        
+        overall_episode_percentages = calculate_overall_percentages(data)
+        overall_episode_row = pd.DataFrame(
+            [{"Object": "Overall"} | overall_episode_percentages.to_dict()]
+        )
+        print(f"Overall results:")
+        print(tabulate(overall_episode_row, headers="keys", tablefmt="pretty", floatfmt=".2%",showindex=False))
 
         # Sorting
         object_results = object_results.sort_values(by=sort_by, ascending=False)
@@ -453,43 +468,45 @@ class HabitatMultiEvaluator:
         print(tabulate(scene_table, headers='keys', tablefmt='pretty', floatfmt='.2%'))
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
         data_per_scene = data.groupby('scene')
-        sr_per_scene = []
-        spl_per_scene = []
+        pr_per_scene = []
+        ppl_per_scene = []
         for scene, scene_data in data_per_scene:
             print(f"\nScene: {scene}")
-            success_rates = []
-            spl_values = []
+            progress_rates = []
+            ppl_values = []
             seq_numbers = []
             for i in range(self.num_seq):
                 sequences = scene_data[scene_data['sequence'] == i]
                 if len(sequences) > 0:
                     successful_experiments = sequences[sequences['state'] == 1]
-                    spl = sequences['spl'].mean() * SEQ_LEN
-                    success_rate = len(successful_experiments) / len(sequences)
+                    ppl = sequences['spl'].mean() * SEQ_LEN
+                    progress_rate = len(successful_experiments) / len(sequences)
 
-                    success_rates.append(success_rate)
-                    spl_values.append(spl)
+                    progress_rates.append(progress_rate)
+                    ppl_values.append(ppl)
                     seq_numbers.append(i)
                     print(f"  Sequence {i}:")
                     print(f"    Num of experiments: {len(sequences)}")
-                    print(f"    Overall SPL: {spl:.4f}")
-                    print(f"    Fraction of successful experiments: {success_rate:.2%}")
+                    print(f"    Overall SPL: {ppl:.4f}")
+                    print(f"    Fraction of successful experiments: {progress_rate:.2%}")
                 else:
                     print(f"  Sequence {i}: No data")
-                    success_rates.append(0)
-                    spl_values.append(0)
-            sr_per_scene.append(success_rates)
-            spl_per_scene.append(spl_values)
-        sr_per_scene = np.array(sr_per_scene)
-        spl_per_scene = np.array(spl_per_scene)
-        sr_per_scene = np.mean(sr_per_scene, axis=0)
-        spl_per_scene = np.mean(spl_per_scene, axis=0)
-        print(f"SPL: {spl_per_scene}, Success Rate: {sr_per_scene}")
+                    progress_rates.append(0)
+                    ppl_values.append(0)
+            pr_per_scene.append(progress_rates)
+            ppl_per_scene.append(ppl_values)
+        pr_per_scene = np.array(pr_per_scene)
+        ppl_per_scene = np.array(ppl_per_scene)
+        pr_per_scene = np.mean(pr_per_scene, axis=0)
+        ppl_per_scene = np.mean(ppl_per_scene, axis=0)
+        print(f"Per sequence data::: PPL: {ppl_per_scene}, Progress: {pr_per_scene}")
+
+        print(f"Overall::: SPL: {np.mean(np.array(sum_spl))}, Success Rate: {overall_sum_successes/len(os.listdir(state_dir))}, PPL: {np.mean(np.array(sum_ppl))}, Progress: {np.mean(np.array(sum_progress))}")
         # Plot Success Rate
-        ax1.plot(np.arange(self.num_seq), sr_per_scene, label=scene, marker='o')
+        ax1.plot(np.arange(self.num_seq), pr_per_scene, label=scene, marker='o')
 
         # Plot SPL
-        ax2.plot(np.arange(self.num_seq), spl_per_scene, label=scene, marker='o')
+        ax2.plot(np.arange(self.num_seq), ppl_per_scene, label=scene, marker='o')
         # Set up Success Rate subplot
         ax1.set_xlabel('Sequence Number')
         ax1.set_ylabel('Success Rate')
