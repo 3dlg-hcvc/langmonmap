@@ -86,7 +86,7 @@ def ensure_navmesh(sim: habitat_sim.Simulator):
     navmesh_settings.agent_max_climb = 0.10
     navmesh_settings.cell_height = 0.05
     navmesh_success = sim.recompute_navmesh(
-        sim.pathfinder, navmesh_settings, include_static_objects=False
+        pathfinder=sim.pathfinder, navmesh_settings=navmesh_settings
     )
     assert navmesh_success, "Failed to build the navmesh!"
     return sim

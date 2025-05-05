@@ -1,0 +1,39 @@
+EvalConf:
+  multi_object: True
+  max_steps: 500
+  max_explore_steps: 350
+  max_dist: 1.5
+  is_gibson: False
+  object_nav_path: "data/datasets/datasets/goat_bench/hm3d/v1/val_seen/"
+  scene_path: "datasets/scene_datasets/"
+  results_path: "results_goat_bench/"
+  log_rerun: False
+  save_video: True
+  use_pointnav: False
+  square_im: True
+  goal_query_type: "detailed" # "coarse", "fine", "detailed"
+  goal_query_processing: "extract_and_split_support"
+
+config: [
+  ./controller_habitat.yaml, # Default Habitat Controller
+  ./mapping_conf_sim.yaml,       # Default Mapping Configuration
+  ./planning_conf.yaml       # Default Planning Configuration
+]
+
+MappingConf:
+  layered: True
+  z_bins_lower: -1.0
+  z_bins_upper: 1.0
+  z_bins_step: 0.8
+  blur_kernel_size: 0.05  # in meters 0.5 default
+  obstacle_map_threshold: 0.4 # in occupancy value
+  obstacle_min: -1.3
+  obstacle_max: 0.5
+  floor_level: -1.41
+  floor_threshold: -1.6
+
+PlanningConf:
+  frontier_depth: 2.5  # in meters  [in navigator.py]
+  max_detect_distance: 1.0 # [in navigator.py]
+  obstcl_kernel_size: 0.5 # [in navigator.py]
+  min_goal_dist: 0.7 # [in navigator.py]

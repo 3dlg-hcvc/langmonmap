@@ -1,19 +1,17 @@
 from eval.habitat_multi_evaluator import HabitatMultiEvaluator
 from config import load_eval_config
-#from eval configimport MONActor
-from eval.habitat_evaluator import Result
-import pickle
+from eval.actor import MONActor
 
 def main():
     import os
     # Load the evaluation configuration
     eval_config = load_eval_config()
     # Create the HabitatEvaluator object
-    evaluator = HabitatMultiEvaluator(eval_config.EvalConf, None)
+    evaluator = HabitatMultiEvaluator(eval_config.EvalConf, MONActor(eval_config.EvalConf))
     # data = evaluator.read_results('/home/finn/active/MON/results_vlfm/', "opt_PL", os.path.join("./", 'vlfm.pkl'))
     # pickle_path = os.path.join("./", 'vlfm.pkl')
     # data = evaluator.read_results('results_multi/', "s",  os.path.join("./", 'multi.pkl'))
-    data = evaluator.read_results('results_multi/', "s")
+    data = evaluator.read_results("s")
     # pickle_path = os.path.join("./", 'multi_noGlasses.pkl')
     # with open(pickle_path, 'wb') as f:
     #     pickle.dump(data, f)

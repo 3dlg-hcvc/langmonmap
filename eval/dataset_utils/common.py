@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
 # typing
+import os
 from typing import List, Dict, Union, Optional
-
 import numpy as np
 
 @dataclass
@@ -61,4 +61,23 @@ class LangMonEpisode():
     current_goal_index: Optional[int] = 0
     shortest_dists: Optional[list] = None
 
-    
+@dataclass
+class LanguageNavEpisode():
+    r"""Goat-bench Episode
+    """
+    scene_id: str
+    scene_dataset_config: str
+    episode_id: str
+    start_position: List[float]
+    start_rotation: List[float]
+    goals: list = None
+    start_room: Optional[str] = None
+    shortest_paths: Optional[List[List]] = None
+    object_category: Optional[str] = None
+    object_instance_id: Optional[int] = None
+    instructions: Optional[List[str]] = None
+
+    @property
+    def goals_key(self) -> str:
+        r"""The key to retrieve the goals"""
+        return f"{os.path.basename(self.scene_id)}_{self.object_instance_id}"
