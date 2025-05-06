@@ -56,7 +56,7 @@ import pickle
 # scipy
 from scipy.spatial.transform import Rotation as R
 
-SEQ_LEN = 1
+SEQ_LEN = 10
 
 
 class Result(enum.Enum):
@@ -239,236 +239,184 @@ class HabitatMultiEvaluator:
         from eval.dataset_utils.object_nav_utils import object_nav_gen
 
         path = self.results_path
-        state_dir = os.path.join(path, "state")
+        state_dir = os.path.join(path, 'state')
         state_results = {}
 
         # Check if the state directory exists
         if not os.path.isdir(state_dir):
             print(f"Error: {state_dir} is not a valid directory")
             return state_results
-        pose_dir = os.path.join(
-            os.path.abspath(os.path.join(state_dir, os.pardir)), "trajectories"
-        )
-        os.makedirs(os.path.join(path, "saved_maps_gt"), exist_ok=True)
+        pose_dir = os.path.join(os.path.abspath(os.path.join(state_dir, os.pardir)), "trajectories")
 
         # Iterate through all files in the state directory
         data = []
         sum_successes = 0
+        sum_spl = []
+        overall_sum_successes = 0
+        sum_progress = []
+        sum_ppl = []
         if data_pkl is None:
+            total_experiments_run = 0
+            episodes = []
             scene_data = {}
+            valid_start_positions = {}
+            scene_floors = {}
+            scenes = {}
+            episodes, scene_data = HM3DDataset.load_hm3d_episodes(episodes, scene_data, gen_multiobject_dataset.path_to_hm3d_objectnav_v2)
+            number_of_floors = gen_multiobject_dataset.load_scenes(episodes, scene_data, valid_start_positions, scene_floors, scenes)
             episodes_json = {ep.episode_id: ep for ep in self.episodes}
-            include_scenes = [] #['102816036', '102816600', '102816756']
+            scene_loaded = {}
+            sim = None
             for filename in sorted(os.listdir(state_dir)):
-                if filename.startswith("state_") and filename.endswith(".txt"):
+                if filename.startswith('state_') and filename.endswith('.txt'):
                     try:
                         # Extract the experiment number from the filename
                         experiment_num = filename.split('state_')[-1].split('.txt')[0]
-                        with open(os.path.join(state_dir, filename), "r") as file:
+                        # Read the content of the file
+                        # if experiment_num > 10:
+                        #     continue
+                        with open(os.path.join(state_dir, filename), 'r') as file:
                             content = file.read().strip()
 
-                        # load scene
-                        scene_id = experiment_num.split('__')[0]
-                        if len(include_scenes) > 0 and scene_id not in include_scenes:
-                            continue
-
-                        if self.sim is None or not self.sim.curr_scene_name in scene_id:
-                            self.load_scene(scene_id)
-
+                        scene_id = episodes_json[experiment_num].scene_id
+                        total_experiments_run += 1
                         # Convert the content to a number (assuming it's a float)
-                        state_values = content.split(",")
+                        state_values = content.split(',')
                         state_values = [int(val) for val in state_values]
                         # Store the result in the dictionary
                         # Create a row for each sequence in the experiment
 
+                        success_for_episode = 0
+                        progress_for_episode = 0.0
+                        ppl_for_episode = []
                         for seq_num, value in enumerate(state_values):
-                            object_goals = episodes_json[experiment_num].goals[seq_num]
-                            # if not (object_goals["granularity"] == "detailed" and object_goals["spatial_rel"] == "on"):
-                            # # # if not (object_goals["granularity"] == "coarse"):
-                            #     continue
-
-                            ppl = 0
+                            spl = 0
                             map_size = 0
                             if value == 1:
-                                if seq_num == self.num_seq - 1:
+                                progress_for_episode += 1.0
+                                if seq_num == 2:
                                     sum_successes += 1
-                                poses = np.genfromtxt(
-                                    os.path.join(
-                                        pose_dir,
-                                        "poses_"
-                                        + str(experiment_num)
-                                        + "_"
-                                        + str(seq_num)
-                                        + ".csv",
-                                    ),
-                                    delimiter=",",
-                                )
+                                    success_for_episode = 1
+                                poses = np.genfromtxt(os.path.join(pose_dir, "poses_" + str(experiment_num) + "_" +
+                                                                   str(seq_num) + ".csv"), delimiter=",")
                                 if len(poses.shape) == 1:
                                     poses = poses.reshape((1, 4))
-                                path_length = np.linalg.norm(
-                                    poses[1:, :3] - poses[:-1, :3], axis=1
-                                ).sum()
+                                path_length = np.linalg.norm(poses[1:, :3] - poses[:-1, :3], axis=1).sum()
                                 # compute the optimal path length
-                                # To-Do - to be changed for goal sequence > 1, euclidean dist to be changed to geodesic
-                                if episodes_json[experiment_num].shortest_dists is None or len(episodes_json[experiment_num].shortest_dists) == 0:
-                                    if episodes_json[experiment_num].shortest_dists is None:
-                                        episodes_json[experiment_num].shortest_dists = [0 for _ in range(len(episodes_json[experiment_num].goals))]
-                                    start_pos = episodes_json[experiment_num].start_position
-                                    _g = episodes_json[experiment_num].goals[seq_num]
-                                    nearest_nav_points = []
-                                    shortest_dists = []
-                                    for _obj in _g["goal_object"]:
-                                        nearest_nav_points.append([float(_obj["nearest_nav_point"][0]), float(_obj["nearest_nav_point"][1]), float(_obj["nearest_nav_point"][2])])
-                                        # shortest_path = habitat_sim.nav.ShortestPath()
-                                        # shortest_path.requested_start = start_pos
-                                        # shortest_path.requested_end = nearest_nav_points[-1]
-                                        # sim.pathfinder.find_path(shortest_path)
-                                        # shortest_dists.append(shortest_path.geodesic_distance)
-                                        shortest_dists.append(np.linalg.norm(np.array(start_pos)-np.array(nearest_nav_points[-1]), ord=2))
-                                    shortest_dists_index = np.argmin(np.array(shortest_dists))
-                                    episodes_json[experiment_num].shortest_dists[seq_num] = shortest_dists[shortest_dists_index]
-                                    start_pos = nearest_nav_points[shortest_dists_index]
-                                
-                                best_dist = episodes_json[experiment_num].shortest_dists[seq_num]
-                                # shortest_paths = [[float(p[0]), float(p[1]), float(p[2])] for p in episodes_json[experiment_num].shortest_paths[seq_num]]
-                                # best_dist, _ = object_nav_gen.geodesic_distance(
-                                #     self.sim, shortest_paths[0], shortest_paths[-1]
-                                # )
-                                ppl = min(
-                                    1.0, 1 * (best_dist / max(path_length, best_dist))
-                                )
+                                if sim is None or not sim.curr_scene_name in scene_id:
+                                    if sim is not None:
+                                        sim.close()
+                                        sim = None
+                                    sim = gen_multiobject_dataset.build_sim(gen_multiobject_dataset.path_to_hm3d_v0_2, scene_id, gen_multiobject_dataset.start_poses_tilt_angle, True)
+                                # if scene_id not in scene_loaded:
+                                #     needs_save = gen_multiobject_dataset.load_all_scene_data(scene_id,
+                                #                                                 scenes, scene_data,
+                                #                                                 viewpoint_conf=object_nav_gen.VPConf(1.0, 0.1, 0.05), sim=sim)
+                                #     if needs_save:
+                                #         print(f"Storing viewpoints for scene {scene_id}")
+                                #         gen_multiobject_dataset.store_viewpoints(scenes, scene_id,"datasets/multi_object_data_goat_bench")
+                                #     scene_loaded[scene_id] = True
 
-                            start_position = episodes_json[experiment_num].start_position
-                            # top_down_map = maps.get_topdown_map(
-                            #     self.sim.pathfinder,
-                            #     height=start_position[1],
-                            #     map_resolution=512,
-                            #     draw_border=True,
-                            # )
-                            # # Draw the start position
-                            # top_down_map = gen_multiobject_dataset.draw_point(
-                            #     self.sim,
-                            #     top_down_map,
-                            #     np.array(start_position),
-                            #     maps.MAP_SOURCE_POINT_INDICATOR,
-                            # )
+                                start_pos = poses[0, :3]
+                                pos = np.array([-start_pos[1], start_pos[2], -start_pos[0]])
+                                min_dist = np.inf
+                                obj_found = False
+                                possible_objs = episodes_json[experiment_num].goals[seq_num]
+                                for obj in possible_objs:
+                                    for _state in obj['view_points']:
+                                        v = _state['agent_state']['position']
+                                        dist, closest_point = object_nav_gen.geodesic_distance(sim, pos, v)
+                                        if dist is None:
+                                            continue
+                                        obj_found = True
+                                        if dist < min_dist:
+                                            min_dist = dist
+                                best_dist = min_dist
+                                if not obj_found:
+                                    print(f"Warning: No object found for sequence {seq_num} in experiment {experiment_num}")
+                                spl = min(1.0, 1 * (best_dist/ max(path_length, best_dist)))
+                                ppl_for_episode.append(spl)
+                            
+                            # optimal_total_path_length = sum([d[0] for d in self.episodes[experiment_num].best_dist])
+                            data.append({
+                                'experiment': experiment_num,
+                                'sequence': seq_num,
+                                'state': value,
+                                'spl': spl / self.num_seq,
+                                'map_size': map_size,
+                                # 'opt_path': optimal_total_path_length,
+                                'object': episodes_json[experiment_num].goals[seq_num][0]['object_category'],
+                                'scene': scene_id
+                            })
 
-                            # Draw the object goals
-                            # _goals = object_goals['goal_object']
-                            # for _g in _goals:
-                            #     top_down_map = gen_multiobject_dataset.draw_point(
-                            #         self.sim,
-                            #         top_down_map,
-                            #         np.array(_g['centroid']),
-                            #         maps.MAP_TARGET_POINT_INDICATOR,
-                            #     )
-
-                            # # Colorize and save the map
-                            # top_down_map = maps.colorize_topdown_map(top_down_map)
-                            # map_size = top_down_map.shape[0] * top_down_map.shape[1]
-
-                            # shortest_paths = [[float(p[0]), float(p[1]), float(p[2])] for p in episodes_json[experiment_num].shortest_paths[seq_num]]
-                            # optimal_total_path_length, _ = object_nav_gen.geodesic_distance(
-                            #     self.sim, shortest_paths[0], shortest_paths[-1]
-                            # )
-                            if self.config.goal_query_type == "coarse":
-                                goal_query = "a " + " ".join(object_goals["object_category"].split('_'))
-                            elif self.config.goal_query_type == "fine":
-                                goal_query = "a " + " ".join(object_goals["extras"]["object_category"].split("_"))
-                            else:
-                                if self.config.goal_query_processing == "extract":
-                                    goal_query = object_goals['language_instruction'].split('Find ')[-1].split('Go to ')[-1].split('.')[0]
-                                else:
-                                    goal_query = object_goals['language_instruction']
-                            data.append(
-                                {
-                                    "experiment": experiment_num,
-                                    "sequence": seq_num,
-                                    "state": value,
-                                    "ppl": ppl / self.num_seq,
-                                    "map_size": map_size,
-                                    # "opt_path": optimal_total_path_length,
-                                    'object': goal_query,
-                                    "scene": episodes_json[experiment_num].scene_id,
-                                    'granularity': object_goals["granularity"]
-                                }
-                            )
-
-                            # np.savez_compressed(
-                            #     f"{path}/saved_maps_gt/{episodes_json[experiment_num].episode_id}_{seq_num}.npz",
-                            #     gt_topdown_map=top_down_map,
-                            #     gt_object_goals=object_goals,
-                            #     experiment_result=data,
-                            # )
+                        if success_for_episode == 1:
+                            overall_sum_successes += 1
+                            sum_spl.append(np.mean(np.array(ppl_for_episode)))
+                        if progress_for_episode > 0:
+                            sum_progress.append(progress_for_episode/self.num_seq)
+                            sum_ppl.append(np.mean(np.array(ppl_for_episode)))
+                        else:
+                            sum_progress.append(0)
+                            sum_ppl.append(0.0)
 
                         # deltas = poses[1:, :3] - poses[:-1, :3]
                         # distance_traveled = np.linalg.norm(deltas, axis=1).sum()
                         # if state_value == 1:
-                        #     spl[experiment_num] = episodes_json[experiment_num].best_dist / max(
-                        #         episodes_json[experiment_num].best_dist, distance_traveled)
+                        #     spl[experiment_num] = self.episodes[experiment_num].best_dist / max(
+                        #         self.episodes[experiment_num].best_dist, distance_traveled)
                         # else:
                         #     spl[experiment_num] = 0
                         if episodes_json[experiment_num].episode_id != experiment_num:
                             print(
-                                f"Warning, experiment_num {experiment_num} does not correctly resolve to episode_id {episodes_json[experiment_num].episode_id}"
-                            )
+                                f"Warning, experiment_num {experiment_num} does not correctly resolve to episode_id {episodes_json[experiment_num].episode_id}")
                     except ValueError:
                         print(f"Warning: Skipping {filename} due to invalid format")
                     # except Exception as e:
                     #     print(f"Error reading {filename}: {str(e)}")
             data = pd.DataFrame(data)
         else:
-            with open(data_pkl, "rb") as f:
+            with open(data_pkl, 'rb') as f:
                 data = pickle.load(f)
         # data = data[data['experiment'] < 88]
-        # states = sorted(data["state"].unique())
-        states = sorted([r.value for r in Result])
-
-        total_episodes = len(data)
+        states = data["state"].unique()
+        total_episodes = total_experiments_run
         print(f"\nTotal experiments: {total_episodes}. Successful experiments: {sum_successes}. Failed experiments: {total_episodes-sum_successes}.")
-
         # print(sum_successes/236)
         def has_success(group, seq_id):
-            return (
-                group[(group["sequence"] == seq_id) & (group["state"] == 1)].shape[0]
-                > 0
-            )
-
+            return group[(group['sequence'] == seq_id) & (group['state'] == 1)].shape[0] > 0
         def calc_prog_per_episode(group):
-            successes = group.groupby("experiment").apply(
-                lambda x: (x["state"] == 1).sum()
-            )
+            successes = group.groupby('experiment').apply(lambda x: (x['state'] == 1).sum())
             progress = successes / self.num_seq
             return progress
 
-        def calc_ppl_per_episode(group):
-            spls_per_exp = group.groupby("experiment")["ppl"].sum()
+        def calc_spl_per_episode(group):
+            spls_per_exp = group.groupby('experiment')['spl'].sum()
             return spls_per_exp
+        
+        def calc_ppl_per_episode(group):
+            spls_per_exp = group.groupby("experiment")["spl"].sum()
+            return spls_per_exp
+
 
         def calculate_percentages(group):
             total = len(group)
-            result = pd.Series(
-                {
-                    Result(state).name: (group["state"] == state).sum() / total
-                    for state in states
-                }
-            )
+            result = pd.Series({Result(state).name: (group['state'] == state).sum() / total for state in states})
             progress = calc_prog_per_episode(group)
-            ppl = calc_ppl_per_episode(group)
+            spl = calc_spl_per_episode(group)
             s = progress[progress == 1]
-            result["Progress"] = progress.mean()
-            result["PPL"] = ppl.mean()
-            # result["opt_PL"] = group["opt_path"].mean()
-            result["Map Size"] = group["map_size"].mean() / 100
-            result["success"] = s.sum() / len(progress)
-            result["SPL"] = ppl[progress == 1].sum() / len(progress)
-            result["episodes"] = ','.join(group['experiment'].unique())
+            result['Progress'] = progress.mean()
+            result['SPL'] = spl.mean()
+            # result['opt_PL'] = group['opt_path'].mean()
+            result['Map Size'] = group['map_size'].mean() / 100
+            result['s'] = s.sum() / len(progress)
+            result['s_spl'] = spl[progress == 1].sum()/len(progress)
 
             # Calculate average SPL and multiply by 100
             # avg_spl = group['spl'].mean()
             # result['Average SPL'] = avg_spl
 
             return result
-
+        
         def calculate_overall_percentages(group):
             result = pd.Series(
                 {
@@ -482,180 +430,110 @@ class HabitatMultiEvaluator:
             result["Progress"] = progress.mean()
             result["PPL"] = ppl.mean()
             # result["opt_PL"] = group["opt_path"].mean()
-            result["Map Size"] = group["map_size"].mean() / 100
-            result["success"] = s.sum() / len(progress)
-            result["SPL"] = ppl[progress == 1].sum() / len(progress)
+            result["success"] = s.sum() / total_episodes
+            result["SPL"] = ppl[progress == 1].sum() / total_episodes
 
             return result
+
+        # Per-object results
+        object_results = data.groupby('object').apply(calculate_percentages).reset_index()
+        object_results = object_results.rename(columns={'object': 'Object'})
+
+        # Per-scene results
+        scene_results = data.groupby('scene').apply(calculate_percentages).reset_index()
+        scene_results = scene_results.rename(columns={'scene': 'Scene'})
+
+        # Overall results
+        overall_percentages = calculate_percentages(data)
+        overall_row = pd.DataFrame([{'Object': 'Overall'} | overall_percentages.to_dict()])
+        object_results = pd.concat([overall_row, object_results], ignore_index=True)
+
+        overall_row = pd.DataFrame([{'Scene': 'Overall'} | overall_percentages.to_dict()])
+        scene_results = pd.concat([overall_row, scene_results], ignore_index=True)
+        
+        overall_episode_percentages = calculate_overall_percentages(data)
+        overall_episode_row = pd.DataFrame(
+            [{"Object": "Overall"} | overall_episode_percentages.to_dict()]
+        )
+        print(f"Overall results:")
+        print(tabulate(overall_episode_row, headers="keys", tablefmt="pretty", floatfmt=".2%",showindex=False))
+
+        # Sorting
+        object_results = object_results.sort_values(by=sort_by, ascending=False)
+        scene_results = scene_results.sort_values(by=sort_by, ascending=False)
 
         # Function to format percentages
         def format_percentages(val):
             return f"{val:.2%}" if isinstance(val, float) else val
 
-        # Per-object results
-        object_results = (
-            data.groupby("object").apply(calculate_percentages).reset_index()
-        )
-        object_results = object_results.rename(columns={"object": "Object"})
-
-        ## Failure analysis
-        object_results_failure = object_results[
-            [
-                "Object",
-                "episodes",
-                "NO_FAILURE",
-                "FAILURE_NOT_REACHED",
-                "FAILURE_MISDETECT",
-                "FAILURE_STUCK",
-                "FAILURE_ALL_EXPLORED",
-                "FAILURE_OOT",
-            ]
-        ]
-        object_results_failure = object_results_failure.sort_values(
-            by=[
-                "FAILURE_ALL_EXPLORED",
-                "FAILURE_MISDETECT",
-                "FAILURE_STUCK",
-                "FAILURE_NOT_REACHED",
-                "FAILURE_ALL_EXPLORED",
-                "FAILURE_OOT",
-            ],
-            ascending=False,
-        )
-
-        # Per-granularity results
-        granularity_results = data.groupby("granularity").apply(calculate_percentages).reset_index()
-        granularity_results["count"] = pd.Series(data.groupby("granularity")["experiment"].agg(["count"]).reset_index()["count"])
-        granularity_results = granularity_results.sort_values(by=sort_by, ascending=False)
-
-        # Per-scene results
-        scene_results = data.groupby("scene").apply(calculate_percentages).reset_index()
-        scene_results = scene_results.rename(columns={"scene": "Scene"})
-
-        # Overall results
-        overall_percentages = calculate_percentages(data)
-
-        # Sorting
-        object_results = object_results.sort_values(by=sort_by, ascending=False)
-        overall_row = pd.DataFrame(
-            [{"Object": "Overall"} | overall_percentages.to_dict()]
-        )
-        object_results = pd.concat([overall_row, object_results], ignore_index=True)
-
-        scene_results = scene_results.sort_values(by=sort_by, ascending=False)
-        overall_row = pd.DataFrame(
-            [{"Scene": "Overall"} | overall_percentages.to_dict()]
-        )
-        scene_results = pd.concat([overall_row, scene_results], ignore_index=True)
-
         # Apply formatting to all columns except the first one (Object/Scene)
-        object_table = (
-            object_results.iloc[:, 0]
-            .to_frame()
-            .join(object_results.iloc[:, 1:].applymap(format_percentages))
-        )
-        scene_table = (
-            scene_results.iloc[:, 0]
-            .to_frame()
-            .join(scene_results.iloc[:, 1:].applymap(format_percentages))
-        )
-
-        object_results_failure = object_results_failure.rename(columns={"FAILURE_OOT": "FAILURE_OTHER"})
-        object_failure_table = (
-                    object_results_failure.iloc[:, 0]
-                    .to_frame()
-                    .join(object_results_failure.iloc[:, 1:].applymap(format_percentages))
-                )
-        overall_episode_percentages = calculate_overall_percentages(data)
-        overall_episode_row = pd.DataFrame(
-            [{"Object": "Overall"} | overall_episode_percentages.to_dict()]
-        )
-        print(f"Failure analysis (Overall):")
-        print(tabulate(overall_episode_row, headers="keys", tablefmt="pretty", floatfmt=".2%",showindex=False))
-        print(f"Failure analysis by Object:")
-        print(tabulate(object_failure_table, headers="keys", tablefmt="pretty", floatfmt=".2%",showindex=False))
-
-        granularity_table = (
-            granularity_results.iloc[:, 0]
-            .to_frame()
-            .join(granularity_results.iloc[:, 1:].applymap(format_percentages))
-        )
-        print(f"Results by Granularity:")
-        print(tabulate(granularity_table, headers="keys", tablefmt="pretty", floatfmt=".2%"))
+        object_table = object_results.iloc[:, 0].to_frame().join(
+            object_results.iloc[:, 1:].applymap(format_percentages))
+        scene_table = scene_results.iloc[:, 0].to_frame().join(
+            scene_results.iloc[:, 1:].applymap(format_percentages))
 
         print(f"Results by Object (sorted by {sort_by} rate, descending):")
-        print(tabulate(object_table, headers="keys", tablefmt="pretty", floatfmt=".2%"))
+        print(tabulate(object_table, headers='keys', tablefmt='pretty', floatfmt='.2%'))
 
         print(f"\nResults by Scene (sorted by {sort_by} rate, descending):")
-        print(tabulate(scene_table, headers="keys", tablefmt="pretty", floatfmt=".2%"))
+        print(tabulate(scene_table, headers='keys', tablefmt='pretty', floatfmt='.2%'))
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-        data_per_scene = data.groupby("scene")
-        sr_per_scene = []
+        data_per_scene = data.groupby('scene')
+        pr_per_scene = []
         ppl_per_scene = []
         for scene, scene_data in data_per_scene:
             print(f"\nScene: {scene}")
-            success_rates = []
+            progress_rates = []
             ppl_values = []
             seq_numbers = []
             for i in range(self.num_seq):
-                sequences = scene_data[scene_data["sequence"] == i]
+                sequences = scene_data[scene_data['sequence'] == i]
                 if len(sequences) > 0:
-                    successful_experiments = sequences[sequences["state"] == 1]
-                    ppl = sequences["ppl"].mean() * SEQ_LEN
-                    success_rate = len(successful_experiments) / len(sequences)
+                    successful_experiments = sequences[sequences['state'] == 1]
+                    ppl = sequences['spl'].mean() * SEQ_LEN
+                    progress_rate = len(successful_experiments) / len(sequences)
 
-                    success_rates.append(success_rate)
+                    progress_rates.append(progress_rate)
                     ppl_values.append(ppl)
                     seq_numbers.append(i)
                     print(f"  Sequence {i}:")
                     print(f"    Num of experiments: {len(sequences)}")
-                    print(f"    Overall PPL: {ppl:.4f}")
-                    print(f"    Fraction of successful experiments: {success_rate:.2%}")
+                    print(f"    Overall SPL: {ppl:.4f}")
+                    print(f"    Fraction of successful experiments: {progress_rate:.2%}")
                 else:
                     print(f"  Sequence {i}: No data")
-                    success_rates.append(0)
+                    progress_rates.append(0)
                     ppl_values.append(0)
-            sr_per_scene.append(success_rates)
+            pr_per_scene.append(progress_rates)
             ppl_per_scene.append(ppl_values)
-        sr_per_scene = np.array(sr_per_scene)
+        pr_per_scene = np.array(pr_per_scene)
         ppl_per_scene = np.array(ppl_per_scene)
-        sr_per_scene = np.mean(sr_per_scene, axis=0)
+        pr_per_scene = np.mean(pr_per_scene, axis=0)
         ppl_per_scene = np.mean(ppl_per_scene, axis=0)
-        print(f"PPL: {ppl_per_scene}, Success Rate: {sr_per_scene}")
+        print(f"Per sequence data::: PPL: {ppl_per_scene}, Progress: {pr_per_scene}")
 
-        episode_results = (
-            data.groupby("experiment").apply(calculate_percentages).reset_index()
-        )
-        episode_results = episode_results.rename(columns={"object": "Object"})
-        episode_table = (
-            episode_results.iloc[:, 0]
-            .to_frame()
-            .join(episode_results.iloc[:, 1:].applymap(format_percentages))
-        )
-        print(f"Overall Results by episode:")
-        print(tabulate(episode_table, headers="keys", tablefmt="pretty", floatfmt=".2%"))
-
+        print(f"Overall::: SPL: {np.mean(np.array(sum_spl))}, Success Rate: {overall_sum_successes/len(os.listdir(state_dir))}, PPL: {np.mean(np.array(sum_ppl))}, Progress: {np.mean(np.array(sum_progress))}")
         # Plot Success Rate
-        ax1.plot(np.arange(self.num_seq), sr_per_scene, label=scene, marker="o")
+        ax1.plot(np.arange(self.num_seq), pr_per_scene, label=scene, marker='o')
 
-        # Plot PPL
-        ax2.plot(np.arange(self.num_seq), ppl_per_scene, label=scene, marker="o")
+        # Plot SPL
+        ax2.plot(np.arange(self.num_seq), ppl_per_scene, label=scene, marker='o')
         # Set up Success Rate subplot
-        ax1.set_xlabel("Sequence Number")
-        ax1.set_ylabel("Success Rate")
-        ax1.set_title("Success Rate per Sequence")
+        ax1.set_xlabel('Sequence Number')
+        ax1.set_ylabel('Success Rate')
+        ax1.set_title('Success Rate per Sequence')
         # ax1.legend()
         ax1.grid(True)
 
         # Set up SPL subplot
-        ax2.set_xlabel("Sequence Number")
-        ax2.set_ylabel("PPL")
-        ax2.set_title("PPL per Sequence")
+        ax2.set_xlabel('Sequence Number')
+        ax2.set_ylabel('SPL')
+        ax2.set_title('SPL per Sequence')
         # ax2.legend()
         ax2.grid(True)
 
         plt.tight_layout()
-        plt.savefig("output_plot.png")
+        plt.savefig('output_plot.png')
 
         plt.show()
         # selected_experiment_ids = successful_experiments['experiment'].unique()
@@ -673,7 +551,7 @@ class HabitatMultiEvaluator:
         # print(f"Fraction of successful first experiments: {len(selected_experiment_ids)/len(all_ids):.2%}")
         # print(f"Fraction of successful second, conditioned on first: {fraction_successful:.2%}")
         return data
-
+    
     def evaluate(self):
         n_eps = 0
         results = []
