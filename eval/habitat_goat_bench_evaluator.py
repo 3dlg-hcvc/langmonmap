@@ -561,7 +561,7 @@ class HabitatMultiEvaluator:
             map_poses_and_obs = []
             metric = Metrics(episode.episode_id)
             results.append(metric)
-            if episode.episode_id in self.exclude_ids:
+            if episode.episode_id in self.exclude_ids or len(episode.goals)==0:
                 pbar.update()
                 continue
             n_eps += 1
