@@ -104,7 +104,7 @@ class OneMap:
         assert isinstance(fusion_type, FusionType), "Invalid fusion_type. It should be one of FusionType."
 
         self.dense_projection = dense_projection
-        self.fusion_type = fusion_type
+        self.fusion_type = fusion_type if config.probabilistic_fusion else FusionType.SPATIAL
         self.map_device = map_device
 
         self.n_cells = config.n_points
@@ -276,7 +276,7 @@ class OneMap:
             return
         if self.agent_height_0 is None:
             self.agent_height_0 = tf_camera_to_episodic[2, 3] / tf_camera_to_episodic[3, 3]
-        if len(values.shape) == 1 or (values.shape[-1] == 1 and values.shape[-2] == 1):
+        if len(values.shape) == 1: #or (values.shape[-1] == 1 and values.shape[-2] == 1):
             confidences_mapped, values_mapped = self.project_single(values, depth,
                                                                     tf_camera_to_episodic, self.fx, self.fy,
                                                                     self.cx, self.cy)
@@ -290,6 +290,13 @@ class OneMap:
                                                                                 self.fx, self.fy,
                                                                                 self.cx, self.cy)
                 self.fuse_maps_layered(confidences_mapped, values_mapped, obstacle_mapped, obstcl_confidence_mapped, artifical_obstacles)
+            elif (values.shape[0] == 1 and values.shape[1] == 1):
+                (confidences_mapped, values_mapped,
+                obstacle_mapped, obstcl_confidence_mapped) = self.project_dense_vlfm(values, torch.Tensor(depth).to("cuda"),
+                                                                                torch.tensor(tf_camera_to_episodic),
+                                                                                self.fx, self.fy,
+                                                                                self.cx, self.cy)
+                self.fuse_maps(confidences_mapped, values_mapped, obstacle_mapped, obstcl_confidence_mapped, artifical_obstacles)
             else:
                 (confidences_mapped, values_mapped,
                 obstacle_mapped, obstcl_confidence_mapped) = self.project_dense(values, torch.Tensor(depth).to("cuda"),
@@ -436,6 +443,195 @@ class OneMap:
 
             self.checked_map = (np.nan_to_num(1.0 / self.checked_conf_map.cpu().numpy())
                                 < self.checked_map_threshold)
+        else:
+            indices = confidences_mapped.indices()
+            indices_obstacle = obstacle_mapped.indices()
+            
+            self.updated_mask[indices[0], indices[1]] = True
+            self.feature_map[indices[0], indices[1]] = values_mapped.values().data
+
+            # Obstacle Map update
+            self.obstacle_map[indices_obstacle[0], indices_obstacle[1]] = obstacle_mapped.values().data.squeeze()
+
+            self.occluded_map = (self.obstacle_map > self.obstacle_map_threshold).cpu().numpy()
+            if artifical_obstacles is not None:
+                for obs in artifical_obstacles:
+                    self.occluded_map[obs[0], obs[1]] = True
+            self.navigable_map = 1 - cv2.dilate((self.occluded_map).astype(np.uint8),
+                                                self.navigable_kernel, iterations=1).astype(bool)
+
+            self.fully_explored_map = (self.obstacle_map > self.fully_explored_threshold).cpu().numpy()
+            self.checked_map = (self.obstacle_map > self.checked_map_threshold).cpu().numpy()
+
+    @torch.no_grad()
+    # @torch.compile
+    def project_dense_vlfm(self,
+                      values: torch.Tensor,
+                      depth: torch.Tensor,
+                      tf_camera_to_episodic: torch.Tensor,
+                      fx, fy, cx, cy
+                      ) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
+        """
+        Projects the dense features into the map
+        TODO We could get rid of sparse tensors entirely and instead use arrays of indices and values to reduce overhead
+        :param values: torch tensor of values, shape (hf, wf, feature_dim)
+        :param depth: torch tensor of depth values, shape (h, w)
+        :param tf_camera_to_episodic:
+        :param fx:
+        :param fy:
+        :param cx:
+        :param cy:
+        :return: (confidences_mapped, values_mapped, obstacle_mapped, obstcl_confidence_mapped), sparse COO tensor in map coordinates
+        """
+        # check if values is on cuda
+        if not values.is_cuda:
+            print("Warning: Provided value array is not on cuda, which it should be as an output of a model. Moving to "
+                  "Cuda, which will slow things down.")
+            values = values.to("cuda")
+        if not depth.is_cuda:
+            print(
+                "Warning: Provided depth array is not on cuda, which it could be if is an output of a model. Moving to "
+                "Cuda, which will slow things down.")
+            depth = depth.to("cuda")
+
+        if values.shape[0:2] == depth.shape[0:2]:
+            # our values align with the depth pixels
+            depth_aligned = depth
+        else:
+            # our values are to be considered "patch wise" where we need to project each patch, by averaging the
+            # depth values within that patch
+            if self.dense_projection == DenseProjectionType.SUBSAMPLE:
+                nh = values.shape[0]
+                nw = values.shape[1]
+                h = depth.shape[0]
+                w = depth.shape[1]
+                # TODO: this is possibly inaccurate, the patch_size might not add up and introduce errors
+                patch_size_h = ceildiv(h, nh)
+                patch_size_w = ceildiv(w, nw)
+
+                pad_h = patch_size_h * nh - h
+                pad_w = patch_size_w * nw - w
+                pad_h_before = pad_h // 2
+                pad_h_after = pad_h - pad_h_before
+                pad_w_before = pad_w // 2
+                pad_w_after = pad_w - pad_w_before
+
+                depth_padded = np.pad(depth, ((pad_h_before, pad_h_after), (pad_w_before, pad_w_after)))
+                depth_aligned = depth_padded.reshape(nh, patch_size_h, nw, patch_size_w).mean(axis=(1, 3))
+            elif self.dense_projection == DenseProjectionType.INTERPOLATE:
+                values = torch.nn.functional.interpolate(values.permute(2, 0, 1).unsqueeze(0),
+                                                         size=depth.shape,
+                                                         mode='bilinear',
+                                                         align_corners=False).squeeze(0).permute(1, 2, 0)
+                depth_aligned = depth
+            else:
+                raise Exception("Unsupported Dense Projection Mode.")
+
+        # TODO this will be wrong for sub-sampled as e.g. fx will be wrong
+        depth_image_smoothed = depth_aligned
+
+        mask = depth_image_smoothed == float('inf')
+        depth_image_smoothed[mask] = depth_image_smoothed[~mask].max()
+        kernel_size = 11
+        pad = kernel_size // 2
+
+        depth_image_smoothed = -torch.nn.functional.max_pool2d(-depth_image_smoothed.unsqueeze(0), kernel_size,
+                                                               padding=pad,
+                                                               stride=1).squeeze(0)
+        # depth_image_smoothed = F.gaussian_blur(depth_image_smoothed, [31, 31], sigma=4.0)
+        # TODO Gaussian Blur temporarily disabled
+        dx = torch.gradient(depth_image_smoothed, dim=1)[0] / (fx / depth.shape[1])
+        dy = torch.gradient(depth_image_smoothed, dim=0)[0] / (fy / depth.shape[0])
+        gradient_magnitude = torch.sqrt(dx ** 2 + dy ** 2)
+        gradient_magnitude = torch.nn.functional.max_pool2d(gradient_magnitude.unsqueeze(0), 11, stride=1,
+                                                            padding=5).squeeze(0)
+        scores = ((1 - torch.tanh(gradient_magnitude * self.gradient_factor)) *
+                  torch.exp(-((self.optimal_object_distance - depth) / self.optimal_object_factor) ** 2 / 3.0))
+        scores_aligned = scores.reshape(-1)
+
+        projected_depth, hole_mask = self.project_depth_camera(depth_aligned, (depth.shape[0], depth.shape[1]), fx,
+                                                    fy, cx, cy)
+
+        rotated_pcl = rotate_pcl(projected_depth, tf_camera_to_episodic)
+        cam_x, cam_y = tf_camera_to_episodic[:2, 3] / tf_camera_to_episodic[3, 3]
+        rotated_pcl[:, :2] += torch.tensor([cam_x, cam_y], device='cuda')
+
+        values_aligned = values.reshape((-1, values.shape[-1]))
+
+        pcl_grid_ids = torch.floor(rotated_pcl[:, :2] / self.cell_size).to(torch.int32)
+        pcl_grid_ids[:, 0] += self.map_center_cells[0]
+        pcl_grid_ids[:, 1] += self.map_center_cells[1]
+
+        # Filter valid updates
+        mask = (depth_aligned.flatten() != float('inf')) & (depth_aligned.flatten() != 0) & (pcl_grid_ids[:, 0] >= self.kernel_half + 1) & (
+                pcl_grid_ids[:, 0] < self.n_cells - self.kernel_half - 1) & (
+                       pcl_grid_ids[:, 1] >= self.kernel_half + 1) & (
+                       pcl_grid_ids[:, 1] < self.n_cells - self.kernel_half - 1)  # for value map
+        if hole_mask.nelement() == 0:
+            mask_obstacle = mask & (((rotated_pcl[:, 2]> self.obstacle_min) & (
+                                         rotated_pcl[:, 2]  < self.obstacle_max)) )
+        else:
+            mask_obstacle = mask & (((rotated_pcl[:, 2] > self.obstacle_min) & (
+                    rotated_pcl[:, 2] < self.obstacle_max)) | hole_mask)
+        mask &= (scores_aligned > 1e-5)
+        mask_obstacle_masked = mask_obstacle[mask]
+        scores_masked = scores_aligned[mask]
+
+        pcl_grid_ids_masked = pcl_grid_ids[mask].T
+        values_to_add = values_aligned[mask] * scores_masked.unsqueeze(1)
+
+        combined_data = torch.cat((
+            values_to_add,
+            mask_obstacle_masked.unsqueeze(1),
+            torch.ones((values_to_add.shape[0], 1), dtype=torch.uint8, device="cuda"),
+            scores_masked.unsqueeze(1)),
+            dim=1)  # prepare to aggregate doubles (values pointing to the same grid cell)
+
+        # define the map from unique ids to all ids
+        pcl_grid_ids_masked_unique, pcl_mapping = pcl_grid_ids_masked.unique(dim=1, return_inverse=True)
+        # coalesce the data
+        coalesced_combined_data = torch.zeros((pcl_grid_ids_masked_unique.shape[1], combined_data.shape[-1]),
+                                              dtype=torch.float32, device="cuda")
+        coalesced_combined_data.index_add_(0, pcl_mapping, combined_data)
+
+        # Extract the data
+        data_dim = combined_data.shape[-1]
+        obstacle_mapped = coalesced_combined_data[:, data_dim - 3]
+        scores_mapped = coalesced_combined_data[:, data_dim - 1].unsqueeze(1)
+        sums_per_cell = coalesced_combined_data[:, data_dim - 2].unsqueeze(1)
+        new_map = coalesced_combined_data[:, :data_dim - 3]
+
+        # Normalize (from sum to mean)
+        new_map /= scores_mapped
+        scores_mapped /= sums_per_cell
+        obstcl_confidence_mapped = scores_mapped
+
+        # Get all the ids that are affected by the kernel (depth noise blurring)
+        ids = pcl_grid_ids_masked_unique
+        all_ids_ = torch.zeros((2, ids.shape[1], self.kernel_size, self.kernel_size), device="cuda")
+        all_ids_[0] = (ids[0].unsqueeze(-1).unsqueeze(-1) + self.kernel_ids_x)
+        all_ids_[1] = (ids[1].unsqueeze(-1).unsqueeze(-1) + self.kernel_ids_y)
+        all_ids, mapping = all_ids_.reshape(2, -1).unique(dim=1, return_inverse=True)
+
+        coalesced_map_data = torch.zeros((all_ids.shape[1], self.feature_dim), dtype=torch.float32, device="cuda")
+        coalesced_scores = torch.zeros((all_ids.shape[1], 1), dtype=torch.float32, device="cuda")
+        # Compute the blurred map and blurred scores
+        coalesced_map_data.index_add_(0, mapping, (new_map.unsqueeze(1).unsqueeze(1)).reshape(-1, self.feature_dim))
+        coalesced_scores.index_add_(0, mapping, (scores_mapped.unsqueeze(1)).reshape(-1, 1))
+
+        # Free up memory to avoid OOM
+        torch.cuda.empty_cache()
+
+        # Compute the obstacle map
+        obstacle_mapped[:] = (obstacle_mapped > 0).to(torch.float32)
+
+        obstacle_mapped = torch.sparse_coo_tensor(pcl_grid_ids_masked_unique, obstacle_mapped.unsqueeze(1), (self.n_cells, self.n_cells, 1), is_coalesced=True).cpu()
+        obstcl_confidence_mapped = torch.sparse_coo_tensor(pcl_grid_ids_masked_unique, obstcl_confidence_mapped, (self.n_cells, self.n_cells, 1), is_coalesced=True).cpu()
+        # print("Updating with sparse matrix of size {}x{} with {} non-zero elements, resulting size is {} Mb".format(
+        #     self.n_cells, self.n_cells, new_map.values().shape[0] * self.feature_dim,
+        #                                 new_map.element_size() * new_map.values().shape[
+        #                                     0] * self.feature_dim / 1024 / 1024))
+        return torch.sparse_coo_tensor(all_ids, coalesced_scores, (self.n_cells, self.n_cells, 1), is_coalesced=True).cpu(), torch.sparse_coo_tensor(all_ids, coalesced_map_data, (self.n_cells, self.n_cells, self.feature_dim), is_coalesced=True).cpu(), obstacle_mapped.cpu(), obstcl_confidence_mapped.cpu()
 
     @torch.no_grad()
     # @torch.compile
@@ -627,7 +823,7 @@ class OneMap:
         #                                 new_map.element_size() * new_map.values().shape[
         #                                     0] * self.feature_dim / 1024 / 1024))
         return torch.sparse_coo_tensor(all_ids, coalesced_scores, (self.n_cells, self.n_cells, 1), is_coalesced=True).cpu(), torch.sparse_coo_tensor(all_ids, coalesced_map_data, (self.n_cells, self.n_cells, self.feature_dim), is_coalesced=True).cpu(), obstacle_mapped.cpu(), obstcl_confidence_mapped.cpu()
-
+    
     @torch.no_grad()
     # @torch.compile
     def project_dense_layered(self,

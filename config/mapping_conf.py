@@ -28,3 +28,5 @@ class MappingConf:
     z_bins_upper: float = 3.0
     z_bins_step: float = 3.0
 
+    probabilistic_fusion: bool = True
+
