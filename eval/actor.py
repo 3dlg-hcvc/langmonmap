@@ -8,6 +8,7 @@ import numpy as np
 # MON
 from vision_models.clip_dense import ClipModel
 from vision_models.blip2_model import BLIP2Model
+from vision_models.clip_image import ClipImageModel
 from vision_models.yolo_world_detector import YOLOWorldDetector
 # from vision_models.grounding_dino_detector import GroundingDinoDetector
 # from vision_models.yolov8_model import YoloV8Detector
@@ -47,6 +48,8 @@ class MONActor(Actor):
             model = ClipModel("weights/clip.pth", jetson=False, fuse_similarity=config.planner.fuse_similarity)
         elif "blip2" in config.use_model:
             model = BLIP2Model()
+        elif "clipimage" in config.use_model:
+            model = ClipImageModel(jetson=False, fuse_similarity=config.planner.fuse_similarity)
         detector = YOLOWorldDetector(config.planner.yolo_confidence) if config.planner.using_ov \
             else YOLOv7Detector(config.planner.yolo_confidence)
             # else YoloV8Detector(config.planner.yolo_confidence)

@@ -448,10 +448,10 @@ class OneMap:
             indices_obstacle = obstacle_mapped.indices()
             
             self.updated_mask[indices[0], indices[1]] = True
-            self.feature_map[indices[0], indices[1]] = values_mapped.values().data
+            self.feature_map[indices[0], indices[1]] = (self.feature_map[indices[0], indices[1]] + values_mapped.values().data)/2
 
             # Obstacle Map update
-            self.obstacle_map[indices_obstacle[0], indices_obstacle[1]] = obstacle_mapped.values().data.squeeze()
+            self.obstacle_map[indices_obstacle[0], indices_obstacle[1]] = torch.maximum(self.obstacle_map[indices_obstacle[0], indices_obstacle[1]], obstacle_mapped.values().data.squeeze())[0]
 
             self.occluded_map = (self.obstacle_map > self.obstacle_map_threshold).cpu().numpy()
             if artifical_obstacles is not None:

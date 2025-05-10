@@ -93,6 +93,7 @@ class BLIP2Model(BaseModel):
         text = self.model.tokenizer(
             text,
             truncation=True,
+            padding=True,
             max_length=self.model.max_txt_len,
             return_tensors="pt",
         ).to(self.device)
