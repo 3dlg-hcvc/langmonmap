@@ -96,13 +96,7 @@ class BLIP2PatchedModel(BLIP2Model):
         n_row = 2 ** (n_levels - 1)
         # patch_feats = patch_feats[level_ids[-1]:].reshape((n_row, n_row, -1))/n_levels
         patch_feats = image_feats[level_ids[-1]:].reshape((n_row, n_row, -1))
-        return patch_feats.permute(2, 0, 1).unsqueeze(0)
-
-    def compute_similarity(self, image_feats: torch.Tensor, text_feats: torch.Tensor) -> torch.Tensor:
-        # image_feats = F.normalize(image_feats, dim=1)  # B C H W, normalize along C
-        # text_feats = F.normalize(text_feats, dim=1)
-        corr = torch.einsum('bchw, bc -> bhw', image_feats, text_feats)
-        return corr
+        return patch_feats.permute(2, 0, 1)
 
 if __name__ == "__main__":
     from PIL import Image
