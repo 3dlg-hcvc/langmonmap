@@ -261,6 +261,8 @@ class Navigator:
             self.previous_sims = None
             self.one_map.reset_checked_map()
             self.detector.set_classes([full_query])
+            if "lseg" in self.model._get_name().lower():
+                self.model.set_classes([full_query])
             self.object_detected = False
             self.get_map(False)
     

@@ -392,13 +392,23 @@ class HabitatMultiEvaluator:
                         for seq_num, value in enumerate(state_values):
                             object_goals = episodes_json[experiment_num].goals[seq_num]
                             language_properties = object_goals["extras"]["language_properties"]
-                            relationships = language_properties['relationships']
-                            attribute_types = language_properties["attributes"]["num_attribute_type"]
-                            attribute_types_present = {a_name:len(a_value['explanation']) for a_name, a_value in attribute_types.items() if a_value["exists"]}
-                            if len(relationships) > 0 and "on" in relationships:
-                                attribute_types_present['on'] = 1
-                            # if not (len(attribute_types_present) > 0):
-                            #     continue
+                            attribute_types = language_properties["features"]
+                            attributes = []
+                            attribute_values = []
+                            attribute_count = 0
+                            for _obj in attribute_types:
+                                _attr = list(_obj.values())[0]
+                                if len(_attr) > 0:
+                                    attribute_types_present = {a_name:a_value['explanation'] for a_name, a_value in _attr.items() if a_value["exists"]}
+                                    for attribute, attribute_vals in attribute_types_present.items():
+                                        attributes.append({attribute: attribute_vals})
+                                        attribute_count += len(attribute_vals)
+
+                            if "on " in  object_goals['language_instruction']:
+                                attribute_values.append('on')
+                                attributes.append({"support": ["on"]})
+                                attribute_count += 1
+
                             total_experiments_run += 1
 
                             ppl = 0
@@ -420,33 +430,31 @@ class HabitatMultiEvaluator:
                                 poses[1:, :3] - poses[:-1, :3], axis=1
                             ).sum()
                             _g = episodes_json[experiment_num].goals[seq_num]
+                            # compute the optimal path length
+                            if episodes_json[experiment_num].shortest_dists is None or len(episodes_json[experiment_num].shortest_dists) == 0:
+                                episodes_json[experiment_num].shortest_dists = [{"nearest_pos": [],"dist": 0}]
+                            else:
+                                episodes_json[experiment_num].shortest_dists.append({"nearest_pos": [],"dist": 0})
+                            if seq_num == 0:
+                                start_pos = episodes_json[experiment_num].start_position
+                            else:
+                                start_pos = episodes_json[experiment_num].shortest_dists[seq_num-1]["nearest_pos"]
+                            
+                            nearest_nav_points = []
+                            shortest_dists = []
+                            for _obj in _g["goal_object"]:
+                                for p in _obj['navigable_points']:
+                                    nearest_nav_points.append([float(p[0]), float(p[1]), float(p[2])])
+                                    shortest_path = habitat_sim.nav.ShortestPath()
+                                    shortest_path.requested_start = start_pos
+                                    shortest_path.requested_end = nearest_nav_points[-1]
+                                    self.sim.pathfinder.find_path(shortest_path)
+                                    shortest_dists.append(shortest_path.geodesic_distance)
+                            shortest_dists_index = np.argmin(np.array(shortest_dists))
+                            best_dist = episodes_json[experiment_num].shortest_dists[seq_num]["dist"] = shortest_dists[shortest_dists_index]
+                            episodes_json[experiment_num].shortest_dists[seq_num]["nearest_pos"] = nearest_nav_points[shortest_dists_index]
                             if value == 1:
-                                if seq_num == self.num_seq - 1:
-                                    sum_successes += 1
-
-                                # compute the optimal path length
-                                if episodes_json[experiment_num].shortest_dists is None or len(episodes_json[experiment_num].shortest_dists) == 0:
-                                    episodes_json[experiment_num].shortest_dists = [{"nearest_pos": [],"dist": 0}]
-                                else:
-                                    episodes_json[experiment_num].shortest_dists.append({"nearest_pos": [],"dist": 0})
-                                if seq_num == 0:
-                                    start_pos = episodes_json[experiment_num].start_position
-                                else:
-                                    start_pos = episodes_json[experiment_num].shortest_dists[seq_num-1]["nearest_pos"]
-                                
-                                nearest_nav_points = []
-                                shortest_dists = []
-                                for _obj in _g["goal_object"]:
-                                    for p in _obj['navigable_points']:
-                                        nearest_nav_points.append([float(p[0]), float(p[1]), float(p[2])])
-                                        shortest_path = habitat_sim.nav.ShortestPath()
-                                        shortest_path.requested_start = start_pos
-                                        shortest_path.requested_end = nearest_nav_points[-1]
-                                        self.sim.pathfinder.find_path(shortest_path)
-                                        shortest_dists.append(shortest_path.geodesic_distance)
-                                shortest_dists_index = np.argmin(np.array(shortest_dists))
-                                best_dist = episodes_json[experiment_num].shortest_dists[seq_num]["dist"] = shortest_dists[shortest_dists_index]
-                                episodes_json[experiment_num].shortest_dists[seq_num]["nearest_pos"] = nearest_nav_points[shortest_dists_index]
+                                sum_successes += 1
                                 ppl = min(
                                     1.0, 1 * (best_dist / max(path_length, best_dist))
                                 )
@@ -466,84 +474,14 @@ class HabitatMultiEvaluator:
                                     min_dist = min(min_dist, shortest_path.geodesic_distance)
                                 if 'sizes' in _obj and len(_obj['sizes']) > 0:
                                     object_sizes.append(np.prod(_obj['sizes']))
-                            ## compute extras
-                            # goal_visible_filename = f"goal_visible_{experiment_num}_{seq_num}.txt"
-                            # with open(os.path.join(extras_dir, goal_visible_filename), "r") as file:
-                            #     vis_content = file.read().strip()
-                            # visible_values = vis_content.split(",")
-                            # total_visible_values = len(visible_values)
-                            # count_visible_values_true = len([val for val in visible_values if val=='True'])
-                            # similarity = 0.0
-                            # if value == Result.FAILURE_MISDETECT.value or value == Result.FAILURE_MISDETECT_ON_MAP.value:
-                            #     granularity = object_goals["granularity"] if "granularity" in object_goals else ""
-                            #     # compute misdetect reason
-                            #     detections_filename = f"detections_{experiment_num}_{seq_num}.npy"
-                            #     detections_last_frame = np.load(os.path.join(extras_dir, detections_filename), allow_pickle=True)
-                            #     if len(detections_last_frame) > 0 and len(detections_last_frame[-1]["goal_pos"]) > 0:
-                            #         detections_last_frame = detections_last_frame[-1]
-                            #         detections = json.loads(detections_last_frame['detections'])
-                            #         goal_pos = detections_last_frame["goal_pos"]
-                            #         agent_pose = detections_last_frame["agent_pose"]
-
-                            #         goal_query_to_match = detections['labels'][0]
-                            #         actual_labels.append(goal_query_to_match)
-                            #         goal_query_to_match_feats = self.actor.mapper.model.get_text_features(goal_query_to_match)
-
-                            #         if granularity == "detailed":
-                            #             scene_object_category = np.array([
-                            #                 scene["metadata"]["name"]
-                            #                 for scene in scene_objects_metadata.values()
-                            #             ])
-                            #         elif granularity == "fine":
-                            #             scene_object_category = np.array([
-                            #                 scene["metadata"]["wnsynsetkey"]
-                            #                 for scene in scene_objects_metadata.values()
-                            #             ])
-                            #         else:
-                            #             scene_object_category = np.array([
-                            #                 scene["metadata"]["main_category"]
-                            #                 for scene in scene_objects_metadata.values()
-                            #             ])
-                            #         # scene_object_category = np.array([
-                            #         #         scene["metadata"]["main_category"]
-                            #         #         for scene in scene_objects_metadata.values()
-                            #         #     ])
-                            #         scene_object_positions = [
-                            #             scene["scene_data"][6].split(" ")
-                            #             for scene in scene_objects_metadata.values()
-                            #         ]
-                            #         scene_object_positions = [[float(p[0]),float(p[2])] for p in scene_object_positions]
-                            #         dist_goal_to_scene_object_positions = np.array([np.linalg.norm(p-np.array([-goal_pos[1], -goal_pos[0]]), ord=2) for p in scene_object_positions])
-                            #         # nearest_objects = [' '.join(o.split('_')) for o in scene_object_category[np.int32(p)] for p in np.argpartition(dist_goal_to_scene_object_positions, 7)[0:7] if dist_goal_to_scene_object_positions[np.int32(p)]<1.0]
-                            #         # if len(nearest_objects) == 0:
-                            #         #     nearest_objects = [' '.join(o.split('_')) for o in scene_object_category[np.int32(p)] for p in np.argpartition(dist_goal_to_scene_object_positions, 7)[0:7]]
-                                    
-                            #         min_dist_index = np.argmin(dist_goal_to_scene_object_positions)
-                            #         nearest_object_cat = scene_object_category[min_dist_index]
-                            #         nearest_object_cat = ' '.join(nearest_object_cat.split('_'))
-                            #         nearest_object_cat_feats = self.actor.mapper.model.get_text_features(nearest_object_cat)
-                            #         # nearest_object_cat_feats = self.actor.mapper.model.get_text_features(nearest_objects)
-                            #         # nearest_object_cat_feats = nearest_object_cat_feats.unsqueeze(0)
-
-                            #         ## calculate similarity
-                            #         # similarity = torch.einsum('bc, bnc -> bn', goal_query_to_match_feats, nearest_object_cat_feats)
-                            #         # similarity_val, similarity_ind = torch.max(similarity, 1)
-                            #         similarity = torch.einsum('bc, bc -> b', goal_query_to_match_feats, nearest_object_cat_feats)
-                            #         similarity = (similarity.item() + 1.0) / 2.0 # range 0-1
-
-                            #         # nearest_object_cat = nearest_objects[similarity_ind.item()]
-                            #         predicted_labels.append(nearest_object_cat)
-                            #         # dist_within_threshold = np.argwhere(dist_goal_to_scene_object_positions < 1).squeeze(1)
-                            #         # objects_within_threshold = scene_object_main_category[dist_within_threshold]
-                            #         # objects_within_threshold = [o for o in objects_within_threshold if len(o) > 0]
 
                             data.append(
                                 {
                                     "experiment": experiment_num,
                                     "sequence": seq_num,
                                     "state": value,
-                                    "num_of_attributes": sum(attribute_types_present.values()),
-                                    "ppl": ppl / self.num_seq,
+                                    "num_of_attributes": attribute_count,
+                                    "ppl": ppl,
                                     "map_size": map_size,
                                     "path_length": path_length,
                                     "num_steps": len(poses),
@@ -552,21 +490,20 @@ class HabitatMultiEvaluator:
                                     'granularity': object_goals["granularity"] if "granularity" in object_goals else "",
                                     'support_relation': "on " in object_goals['language_instruction'],
                                     'distance_to_goal': min_dist,
-                                    # 'goal_visible_frames_ratio': count_visible_values_true/total_visible_values,
                                     'goal_size': np.round(np.mean(np.array(object_sizes)), 2),
-                                    # 'pred_label_similarity': np.round(similarity, 2),
                                     'exploit_enabled': len(poses) > self.max_explore_steps
                                 }
                             )
 
-                            for attribute, num_attr in attribute_types_present.items():
+                            if len(attributes) == 0:
                                 data_per_attribute.append({
                                     "experiment": experiment_num,
                                     "sequence": seq_num,
                                     "state": value,
-                                    "attribute": attribute,
-                                    "num_of_attributes": num_attr,
-                                    "ppl": ppl / self.num_seq,
+                                    "attribute": "",
+                                    "attribute_value": "",
+                                    "num_of_attributes": 0,
+                                    "ppl": ppl,
                                     "map_size": map_size,
                                     "path_length": path_length,
                                     "num_steps": len(poses),
@@ -580,6 +517,32 @@ class HabitatMultiEvaluator:
                                     # 'pred_label_similarity': np.round(similarity, 2),
                                     'exploit_enabled': len(poses) > self.max_explore_steps
                                 })
+                            else:
+                                all_attr_names = [list(a.keys())[0] for a in attributes]
+                                for _attribute in attributes:
+                                    _attribute_name, _attribute_value = list(_attribute.items())[0]
+                                    for _val in _attribute_value:
+                                        data_per_attribute.append({
+                                            "experiment": experiment_num,
+                                            "sequence": seq_num,
+                                            "state": value,
+                                            "attribute": _attribute_name,
+                                            "attribute_value": _val,
+                                            "num_of_attributes": all_attr_names.count(_attribute_name),
+                                            "ppl": ppl,
+                                            "map_size": map_size,
+                                            "path_length": path_length,
+                                            "num_steps": len(poses),
+                                            'object': goal_query,
+                                            "scene": episodes_json[experiment_num].scene_id,
+                                            'granularity': object_goals["granularity"] if "granularity" in object_goals else "",
+                                            'support_relation': "on " in object_goals['language_instruction'],
+                                            'distance_to_goal': min_dist,
+                                            # 'goal_visible_frames_ratio': count_visible_values_true/total_visible_values,
+                                            'goal_size': np.round(np.mean(np.array(object_sizes)), 2),
+                                            # 'pred_label_similarity': np.round(similarity, 2),
+                                            'exploit_enabled': len(poses) > self.max_explore_steps
+                                        })
 
                         if episodes_json[experiment_num].episode_id != experiment_num:
                             print(
@@ -604,15 +567,15 @@ class HabitatMultiEvaluator:
                 > 0
             )
 
-        def calc_prog_per_episode(group):
+        def calc_prog_per_episode(group, num_seq):
             successes = group.groupby("experiment").apply(
                 lambda x: (x["state"] == 1).sum()
             )
-            progress = successes / self.num_seq
+            progress = successes / num_seq
             return progress
 
         def calc_ppl_per_episode(group):
-            spls_per_exp = group.groupby("experiment")["ppl"].sum()
+            spls_per_exp = group.groupby("experiment")["ppl"].mean()
             return spls_per_exp
 
         def calculate_percentages(group):
@@ -623,7 +586,7 @@ class HabitatMultiEvaluator:
                     for state in states
                 }
             )
-            progress = calc_prog_per_episode(group)
+            progress = calc_prog_per_episode(group, 3)
             ppl = calc_ppl_per_episode(group)
             s = progress[progress == 1]
             result["Progress"] = progress.mean()
@@ -655,7 +618,7 @@ class HabitatMultiEvaluator:
                     for state in states
                 }
             )
-            progress = calc_prog_per_episode(group)
+            progress = calc_prog_per_episode(group, 3)
             ppl = calc_ppl_per_episode(group)
             s = progress[progress == 1]
             result["Progress"] = progress.mean()
