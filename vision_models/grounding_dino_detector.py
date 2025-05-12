@@ -1,20 +1,26 @@
 from typing import List
-
-import requests
-
 import torch
 from PIL import Image
-from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
+from groundingdino.util.inference import load_model, load_image, predict, annotate
+import torchvision.transforms as TS
 
 
 class GroundingDinoDetector:
     def __init__(self,
-                 confidence_threshold: float
+                 confidence_threshold: float = 0.6
                  ):
-        model_id = "IDEA-Research/grounding-dino-base"
-        self.confidence_threshold = confidence_threshold
-        self.processor = AutoProcessor.from_pretrained(model_id)
-        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to("cuda")
+        # model_id = "IDEA-Research/grounding-dino-base"
+        # self.confidence_threshold = confidence_threshold
+        # self.processor = AutoProcessor.from_pretrained(model_id)
+        # self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to("cuda")
+        self.model = load_model("GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py", "weights/groundingdino_swint_ogc.pth")
+        self.transform = TS.Compose(
+            [
+                TS.ToTensor(),
+                TS.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            ]
+        )
+        
 
     def set_classes(self,
                     classes: List[str]
@@ -24,21 +30,23 @@ class GroundingDinoDetector:
     def detect(self,
                image: Image
                ):
-        inputs = self.processor(images=image, text=self.classes[0], return_tensors="pt").to("cuda")
+        
+        image_transformed = self.transform(image)
         with torch.no_grad():
-            outputs = self.model(**inputs)
+            boxes, logits, phrases = predict(
+                model=self.model, 
+                image=image_transformed, 
+                caption=self.classes[0], 
+                box_threshold=0.60, 
+                text_threshold=0.60
+            )
 
-        results = self.processor.post_process_grounded_object_detection(
-            outputs,
-            inputs.input_ids,
-            box_threshold=self.confidence_threshold,
-            text_threshold=self.confidence_threshold,
-            target_sizes=[image.shape[::-1]]
-        )[0] # (top_left_x, top_left_y, bottom_right_x, bottom_right_y),
         res = {}
         res["boxes"] = []
         res["scores"] = []
-        for box, score in zip(results['boxes'], results['scores']):
+        res["labels"] = []
+        for box, score, label in zip(boxes, logits, phrases):
             res["boxes"].append([box[0].item(), box[1].item(), box[2].item(), box[3].item()])
-            res["scores"].append(score)
+            res["scores"].append(score.item())
+            res["labels"].append(label)
         return res

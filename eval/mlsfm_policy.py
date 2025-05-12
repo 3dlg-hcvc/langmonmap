@@ -987,7 +987,16 @@ class HabitatMultiEvaluator:
                 else:
                     goal_query = current_obj['language_instruction']
 
-            if self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "on " in goal_query:
+            if self.config.goal_query_processing == "mix":
+                goal_query = current_obj['language_instruction']
+                full_query = goal_query
+                if "on " in goal_query:
+                    goal_query = goal_query.split(' on ')[::-1]
+                    self.actor.set_queries(goal_query, full_query)
+                else:
+                    self.actor.set_query(goal_query)
+
+            elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "on " in goal_query:
                 full_query = goal_query
                 goal_query = goal_query.split(' on ')[::-1]
                 self.actor.set_queries(goal_query, full_query)
