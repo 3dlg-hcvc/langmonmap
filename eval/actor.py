@@ -12,7 +12,7 @@ from vision_models.blip2_model_patched import BLIP2PatchedModel
 from vision_models.clip_image import ClipImageModel
 from vision_models.lseg_model import LSegModel
 from vision_models.yolo_world_detector import YOLOWorldDetector
-from vision_models.grounding_dino_detector import GroundingDinoDetector
+#from vision_models.grounding_dino_detector import GroundingDinoDetector
 # from vision_models.yolov8_model import YoloV8Detector
 from vision_models.point_nav_policy import WrappedPointNavResNetPolicy
 # from vision_models.yolov6_model import YOLOV6Detector
@@ -63,8 +63,8 @@ class MONActor(Actor):
             else:
                 detector = YOLOv7Detector(config.planner.yolo_confidence)
             # else YoloV8Detector(config.planner.yolo_confidence)
-        elif "gdino" in config.use_detector_model:
-            detector = GroundingDinoDetector(confidence_threshold=config.planner.yolo_confidence)
+        #elif "gdino" in config.use_detector_model:
+            #detector = GroundingDinoDetector(confidence_threshold=config.planner.yolo_confidence)
 
         self.policy = None
         self.action_lookup = [None, 'move_forward', 'turn_left', 'turn_right']
