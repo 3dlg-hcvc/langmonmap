@@ -1,83 +1,23 @@
 <p align="center">
   <img src="docs/sys.png" width="900", style="border-radius:10%">
-  <h1 align="center">One Map to Find Them All: Real-time Open-Vocabulary Mapping for Zero-shot Multi-Object Navigation</h1>
-  <h3 align="center">
-    <a href="https://www.kth.se/profile/flbusch?l=en">Finn Lukas Busch</a>,
-    <a href="https://www.kth.se/profile/timonh">Timon Homberger</a>,
-    <a href="https://www.kth.se/profile/jgop">Jesús Ortega-Peimbert</a>,
-    <a href="https://www.kth.se/profile/quantao?l=en">Quantao Yang</a>,
-    <a href="https://www.kth.se/profile/olovand" style="white-space: nowrap;"> Olov Andersson</a>
-  </h3>
-  <p align="center">
-    <a href="https://www.finnbusch.com/OneMap/">Project Website</a> , <a href="https://arxiv.org/pdf/2409.11764">Paper (arXiv)</a>
-  </p>
-</p>
+  <h1 align="center">LangNavBench: Evaluation of Natural Language Understanding in Semantic Navigation</h1>
 
-This repository contains the code for the paper "One Map to Find Them All: Real-time Open-Vocabulary Mapping for
-Zero-shot Multi-Object Navigation". We provide a [dockerized environment](#setup-docker) to run the code or
-you can [run it locally](#setup-local-without-docker).
-
-In summary we open-source:
-- The OneMap mapping and navigation code
-- The evaluation code for single- and multi-object navigation
-- The multi-object navigation dataset and benchmark
-- The multi-object navigation dataset generation code, such that you can generate your own datasets
+This repository contains the code for the paper "LangNavBench: Evaluation of Natural Language
+Understanding in Semantic Navigation". We add instructions on how to run the experiments reported in the paper.
 
 ## Abstract
-The capability to efficiently search for objects in complex environments is fundamental for many real-world robot 
-applications. Recent advances in open-vocabulary vision models have resulted in semantically-informed object navigation \
-methods that allow a robot to search for an arbitrary object without prior training. However, these 
-zero-shot methods have so far treated the environment as unknown for each consecutive query.
-In this paper we introduce a new benchmark for zero-shot multi-object navigation, allowing the robot to leverage
-information gathered from previous searches to more efficiently find new objects. To address this problem we build a
-reusable open-vocabulary feature map tailored for real-time object search. We further propose a probabilistic-semantic
-map update that mitigates common sources of errors in semantic feature extraction and leverage this semantic uncertainty
-for informed multi-object exploration. We evaluate our method on a set of object navigation tasks in both simulation
-as well as with a real robot, running in real-time on a Jetson Orin AGX. We demonstrate that it outperforms existing
-state-of-the-art approaches both on single and multi-object navigation tasks.
-## Setup (Docker)
-### 0. Docker 
-You will need to have Docker installed on your system. Follow the [official instructions](https://docs.docker.com/engine/install/ubuntu/) to install.
-You will also need to have the [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-installed and configured as docker runtime on your system.
+Recent progress in large vision–language models has driven improvements in language-based semantic navigation, where an embodied agent must reach a target object described in natural language. Despite these advances, we still lack a clear, language-focused benchmark for testing how well such agents ground the words in their instructions.
+We address this gap with LangNav, an open-set dataset specifically created to test an agent’s ability to locate objects described at different levels of detail, from broad category names to fine attributes and object–object relations. Every description in LangNav was manually checked, yielding a lower error rate than existing lifelong- and semantic-navigation datasets. On top of LangNav we build LangNavBench, a benchmark that measures how well current semantic-navigation methods understand and act on these descriptions while moving toward their targets. LangNavBench allows to systematically compare models on their handling of attributes, spatial and relational cues, and category hierarchies, offering the first thorough, language-centred evaluation of embodied navigation systems. We also present  Multi-Layered Feature Map (MLFM), a method that builds a queryable multi-layered semantic map, particularly effective when dealing with small objects or instructions involving spatial relations. MLFM outperforms state-of-the-art mapping-based navigation baselines on the LangNav dataset.
+
+## Code setup
 
 ### 1. Clone the repository
 ```
 # https
-git clone https://github.com/KTH-RPL/OneMap.git
+git clone 
 # or ssh
-git clone git@github.com:KTH-RPL/OneMap.git
-cd OneMap/
-```
-### 2. Build the Docker Image
-The docker image build process will build habitat-sim and download model weights. You can choose to let the container
-download the habitat scenes during build, or if you have them already downloaded, you can set `HM3D=LOCAL` and provide
-the absolute `HM3D_PATH` to the `versioned_data` directory on your machine in the `.env` file in the root of the repository. 
-
-If you want the container to download the scenes for you, set `HM3D=FULL` in the `.env` file and provide your
-Matterport credentials. You can get access for Matterport for free [here](https://matterport.com/partners/meta).
-You will not need to provide a `HM3D_PATH` then.
-Having configured the `.env` file, you can build the docker image in the root of the repository with:
-```
-docker compose build
-```
-The build will take a while as `habitat-sim` is built from source. You can launch the docker container with:
-```
-bash run_docker.sh
-```
-and open a new terminal in the container with:
-```
-docker exec -it onemap-onemap-1 bash
-```
-## Setup (Local, without Docker)
-
-### 1. Clone the repository
-```
-# https
-git clone https://github.com/KTH-RPL/OneMap.git
-# or ssh
-git clone git@github.com:KTH-RPL/OneMap.git
-cd OneMap/
+git clone 
+cd langmonmap/
 ```
 ### 2. Install dependencies
 ```
@@ -161,13 +101,7 @@ and change the parameters such as number of objects per episode in the correspon
 ## Citation
 If you use this code in your research, please cite our paper:
 ```
-@misc{busch2024mapallrealtimeopenvocabulary,
-      title={One Map to Find Them All: Real-time Open-Vocabulary Mapping for Zero-shot Multi-Object Navigation}, 
-      author={Finn Lukas Busch and Timon Homberger and Jesús Ortega-Peimbert and Quantao Yang and Olov Andersson},
-      year={2024},
-      eprint={2409.11764},
-      archivePrefix={arXiv},
-      primaryClass={cs.RO},
-      url={https://arxiv.org/abs/2409.11764}, 
+@misc{langnavbenchraychaudhuri,
+      title={LangNavBench: Evaluation of Natural Language Understanding in Semantic Navigation},
 }
 ```
