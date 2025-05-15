@@ -7,6 +7,10 @@ import numpy as np
 
 # MON
 from vision_models.clip_dense import ClipModel
+from vision_models.blip2_model import BLIP2Model
+from vision_models.blip2_model_patched import BLIP2PatchedModel
+from vision_models.clip_image import ClipImageModel
+from vision_models.lseg_model import LSegModel
 from vision_models.yolo_world_detector import YOLOWorldDetector
 # from vision_models.grounding_dino_detector import GroundingDinoDetector
 # from vision_models.yolov8_model import YoloV8Detector
@@ -42,10 +46,25 @@ class Actor(ABC):
 
 class MONActor(Actor):
     def __init__(self, config):
-        model = ClipModel("weights/clip.pth", jetson=False, fuse_similarity=config.planner.fuse_similarity)
-        detector = YOLOWorldDetector(config.planner.yolo_confidence) if config.planner.using_ov \
-            else YOLOv7Detector(config.planner.yolo_confidence)
+        if len(config.use_model) == 0:
+            model = ClipModel("weights/clip.pth", jetson=False, fuse_similarity=config.planner.fuse_similarity)
+        elif "blip2_patch" in config.use_model:
+            model = BLIP2PatchedModel()
+        elif "blip2" in config.use_model:
+            model = BLIP2Model()
+        elif "clipimage" in config.use_model:
+            model = ClipImageModel(jetson=False, fuse_similarity=config.planner.fuse_similarity)
+        elif "lseg" in config.use_model:
+            model = LSegModel(jetson=False, fuse_similarity=config.planner.fuse_similarity)
+        
+        if len(config.use_detector_model) == 0:
+            if config.planner.using_ov:
+                YOLOWorldDetector(config.planner.yolo_confidence)
+            else:
+                detector = YOLOv7Detector(config.planner.yolo_confidence)
             # else YoloV8Detector(config.planner.yolo_confidence)
+        # elif "gdino" in config.use_detector_model:
+        #     detector = GroundingDinoDetector(confidence_threshold=config.planner.yolo_confidence)
 
         self.policy = None
         self.action_lookup = [None, 'move_forward', 'turn_left', 'turn_right']

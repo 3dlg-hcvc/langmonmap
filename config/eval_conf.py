@@ -25,6 +25,8 @@ class EvalConf:
     num_seq: int = 1
     save_maps: bool = False
     pointnav_ckpt_path: str = ""
+    use_model: str = ""
+    use_detector_model: str = ""
 
 
 def load_eval_config():

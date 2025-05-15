@@ -30,6 +30,7 @@ class BLIP2Model(BaseModel):
         self.image_atts = torch.ones((1, 257), dtype=torch.long).to(
             self.device
         )
+        self.feature_dim = 256
         # self.set_batch_size(21)
 
     def set_batch_size(self, batch_size: int) -> None:
@@ -38,8 +39,7 @@ class BLIP2Model(BaseModel):
         )
 
     @torch.inference_mode()
-    def preprocess_image(self, image: np.ndarray | torch.Tensor
-                         ) -> torch.Tensor:
+    def preprocess_image(self, image) -> torch.Tensor:
         # img = image.squeeze()
         if image.shape[-1] == 3 or image.shape[-2] == 3:
             # throw error
@@ -84,7 +84,7 @@ class BLIP2Model(BaseModel):
         image_feats = self.process_image(image)
         # TODO Need to adjust dimensions, this is probably NOT B F H W, but B Q F
         image_feats = image_feats.mean(dim=1)
-        image_feats = image_feats.unsqueeze(-1).unsqueeze(-1)
+        image_feats = image_feats.unsqueeze(-1).unsqueeze(-1).squeeze(0)
         return image_feats
 
     @torch.inference_mode()
@@ -93,6 +93,7 @@ class BLIP2Model(BaseModel):
         text = self.model.tokenizer(
             text,
             truncation=True,
+            padding=True,
             max_length=self.model.max_txt_len,
             return_tensors="pt",
         ).to(self.device)
@@ -107,5 +108,13 @@ class BLIP2Model(BaseModel):
         )
         return text_feat
 
-    def compute_similarity(self, image_feats: torch.Tensor, text_feats: torch.Tensor) -> torch.Tensor:
-        pass
+    def compute_similarity(self, image_feats: torch.Tensor, text_feats: torch.Tensor, num_layers: float = 0) -> torch.Tensor:
+        if len(image_feats.shape) == 3:
+            similarity = torch.einsum('bcx, bc -> bx', image_feats, text_feats)
+        elif len(image_feats.shape) == 4:
+            similarity = torch.einsum('bchw, bc -> bhw', image_feats, text_feats)
+        else:
+            similarity = torch.einsum('bchwl, bc -> bhwl', image_feats, text_feats)
+        
+        similarity = torch.sum(similarity, axis=0).unsqueeze(0)
+        return similarity
