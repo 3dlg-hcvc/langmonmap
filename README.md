@@ -1,5 +1,4 @@
 <p align="center">
-  <img src="docs/sys.png" width="900", style="border-radius:10%">
   <h1 align="center">LangNavBench: Evaluation of Natural Language Understanding in Semantic Navigation</h1>
 
 This repository contains the code for the paper "LangNavBench: Evaluation of Natural Language
