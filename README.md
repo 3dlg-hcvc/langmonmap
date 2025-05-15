@@ -19,10 +19,25 @@ git clone
 cd langmonmap/
 ```
 ### 2. Install dependencies
+Create a conda environment and install Habitat-sim v0.2.5
 ```
-python3 -m pip install gdown torch torchvision torchaudio meson
-python3 -m pip install -r requirements.txt
+# create conda and install habitat
+conda create -n langnav python=3.9 cmake=3.14.0 habitat-sim=0.2.5 headless -c conda-forge  -c aihabitat
+conda activate langnav
 ```
+Install Habitat-lab v0.2.5
+```
+python -m pip install habitat-lab==0.2.520230802
+python -m pip install habitat-baselines==0.2.520230802
+```
+
+```
+cd langmonmap
+python -m pip install gdown torch torchvision torchaudio meson
+python -m pip install -r requirements.txt
+```
+
+
 Manually install newer `timm` version:
 ```
 python3 -m pip install --upgrade timm>=1.0.7
