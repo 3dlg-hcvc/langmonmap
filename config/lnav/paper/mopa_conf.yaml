@@ -1,0 +1,32 @@
+EvalConf:
+  multi_object: True
+  max_steps: 500
+  max_explore_steps: 200
+  max_dist: 1.0
+  is_gibson: False
+  object_nav_path: "datasets/langmon/eval/test_mini"
+  num_seq: 1
+  scene_path: "datasets/scene_datasets/fphab/"
+  results_path: "results_vlfm/"
+  log_rerun: True
+  save_video: False
+  save_maps: False
+  use_pointnav: False
+  square_im: True
+  goal_query_type: "detailed" # "coarse", "fine", "detailed"
+  goal_query_processing: "vanilla"
+  use_model: "mopa"
+
+config: [
+  ../mon/controller_habitat.yaml, # Default Habitat Controller
+  ../mon/mapping_conf_sim.yaml,       # Default Mapping Configuration
+  ../mon/planning_conf.yaml       # Default Planning Configuration
+]
+
+MappingConf:
+  layered: False
+  probabilistic_fusion: False
+
+PlanningConf:
+  use_detector: False
+
