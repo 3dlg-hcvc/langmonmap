@@ -4,10 +4,10 @@ EvalConf:
   max_explore_steps: 200
   max_dist: 1.0
   is_gibson: False
-  object_nav_path: "datasets/langmon/eval/test_mini"
+  object_nav_path: "datasets/langmon/test"
   num_seq: 3
   scene_path: "datasets/scene_datasets/fphab/"
-  results_path: "results_mlsfm_gdino_conf1_test_mini/"
+  results_path: "results_mlsfm_gdino_test/"
   log_rerun: False
   save_video: False
   save_maps: False
