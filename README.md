@@ -41,10 +41,7 @@ python3 -m pip install ./planning_cpp/
 ```
 mkdir -p weights/
 ```
-download extracted weights:
-```
-
-```
+Download SED Clip model weights from [OneMap](https://github.com/KTH-RPL/OneMap?tab=readme-ov-file#3-download-the-model-weights) repository and place it under weights/.
 
 ### 4. Download scenes data
 Follow instructions for Habitat Synthetic Scenes Dataset (HSSD) and download from [here](https://huggingface.co/datasets/hssd/hssd-hab).
