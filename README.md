@@ -2,7 +2,7 @@
   <h1 align="center">LangNavBench: Evaluation of Natural Language Understanding in Semantic Navigation</h1>
 
 This repository contains the code for the paper "LangNavBench: Evaluation of Natural Language
-Understanding in Semantic Navigation". We add instructions on how to run the experiments reported in the paper.
+Understanding in Semantic Navigation". We add instructions on how to run the experiments reported in the paper. [[webpage]](https://3dlg-hcvc.github.io/langmonmap/)
 
 ## Abstract
 Recent progress in large vision–language models has driven improvements in language-based semantic navigation, where an embodied agent must reach a target object described in natural language. Despite these advances, we still lack a clear, language-focused benchmark for testing how well such agents ground the words in their instructions.
