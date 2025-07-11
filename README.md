@@ -71,7 +71,13 @@ We use assets from [HSSD](https://huggingface.co/datasets/hssd/hssd-hab) to buil
 ## Citation
 If you use this code in your research, please cite our paper:
 ```
-@misc{langnavbenchraychaudhuri,
-      title={LangNavBench: Evaluation of Natural Language Understanding in Semantic Navigation},
+@misc{raychaudhuri2025langnavbench,
+      title={LangNavBench: Evaluation of Natural Language Understanding in Semantic Navigation}, 
+      author={Sonia Raychaudhuri and Enrico Cancelli and Tommaso Campari and Lamberto Ballan and Manolis Savva and Angel X. Chang},
+      year={2025},
+      eprint={2507.07299},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2507.07299}, 
 }
 ```
