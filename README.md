@@ -18,12 +18,18 @@ git clone https://github.com/3dlg-hcvc/langmonmap.git
 git clone git@github.com:3dlg-hcvc/langmonmap.git
 ```
 ### 2. Install dependencies
-Create a conda environment and install Habitat-sim v0.2.5
+Create a conda environment
 ```
-# create conda and install habitat
-conda create -n langnav python=3.9 cmake=3.14.0 habitat-sim=0.2.5 headless -c conda-forge  -c aihabitat
+# create conda environment
+conda create -n langnav python=3.9 cmake=3.14.0
 conda activate langnav
 ```
+
+Install Habitat-sim v0.2.5, following instructions from [here](https://github.com/facebookresearch/habitat-sim/tree/v0.2.5)
+```
+conda install habitat-sim=0.2.5 -c conda-forge -c aihabitat
+```
+
 Install dependencies
 ```
 cd langmonmap
