@@ -27,7 +27,16 @@ conda activate langnav
 
 Install Habitat-sim v0.2.5, following instructions from [here](https://github.com/facebookresearch/habitat-sim/tree/v0.2.5)
 ```
-conda install habitat-sim=0.2.5 -c conda-forge -c aihabitat
+git clone --branch v0.2.5 https://github.com/facebookresearch/habitat-sim.git
+cd habitat-sim
+python setup.py build_ext --parallel 1 install
+cd ..
+```
+
+Install Habitat-lab
+```
+python -m pip install habitat-lab==0.2.520230802
+python -m pip install habitat-baselines==0.2.520230802
 ```
 
 Install dependencies
@@ -35,14 +44,17 @@ Install dependencies
 cd langmonmap
 python -m pip install -r requirements.txt
 ```
+
 YOLOV7:
 ```
 git clone https://github.com/WongKinYiu/yolov7
 ```
+
 Build planning utilities:
 ```
 python3 -m pip install ./planning_cpp/
 ```
+
 ### 3. Download the model weights
 ```
 mkdir -p weights/
@@ -52,6 +64,11 @@ Download SED Clip model weights from [OneMap](https://github.com/KTH-RPL/OneMap?
 ### 4. Download scenes data
 Follow instructions for Habitat Synthetic Scenes Dataset (HSSD) and download from [here](https://huggingface.co/datasets/hssd/hssd-hab).
 Link the scenes in ``datasets/scene_datasets/fphab/''.
+```
+mkdir -p datasets/scene_datasets
+cd datasets/scene_datasets
+ln -s <path_to_hssd> fphab
+```
 
 ### Download LangNav dataset
 Follow HuggingFace [LangNav](https://huggingface.co/datasets/3dlg-hcvc/langnav) dataset to download the data splits.
