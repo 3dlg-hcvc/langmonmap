@@ -4,7 +4,7 @@ EvalConf:
   max_explore_steps: 200
   max_dist: 1.0
   is_gibson: False
-  object_nav_path: "datasets/langmon/test"
+  object_nav_path: "datasets/langnav/test"
   num_seq: 3
   scene_path: "datasets/scene_datasets/fphab/"
   results_path: "results_mlsfm_lseg/"
