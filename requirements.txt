@@ -1,5 +1,11 @@
-numpy==1.24.0
+numpy<=1.24.0
+gdown 
+torch
+torchvision
+torchaudio 
+meson
 einops
+h5py
 salesforce-lavis
 rerun-sdk
 git+https://github.com/facebookresearch/detectron2.git
@@ -7,8 +13,6 @@ inference-gpu[yolo-world]
 supervision==0.25.0
 spock-config
 depth_camera_filtering@git+https://github.com/naokiyokoyama/depth_camera_filtering
-habitat-lab==0.2.520230802
-habitat-baselines==0.2.520230802
 git+https://github.com/ChaoningZhang/MobileSAM.git
 scikit-fmm
 ultralytics==8.2.73
@@ -18,10 +22,4 @@ git+https://github.com/xb534/SED/#subdirectory=open_clip
 git+https://github.com/xinyu1205/recognize-anything.git
 scikit-learn
 spock-config==3.1.0
-gdown 
-torch
-torchvision
-torchaudio 
-meson
-timm>=1.0.7
 

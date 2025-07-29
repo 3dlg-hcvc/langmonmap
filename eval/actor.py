@@ -57,9 +57,10 @@ class MONActor(Actor):
         elif "lseg" in config.use_model:
             model = LSegModel(jetson=False, fuse_similarity=config.planner.fuse_similarity)
         
+        detector = YOLOWorldDetector(config.planner.yolo_confidence)
         if len(config.use_detector_model) == 0:
             if config.planner.using_ov:
-                YOLOWorldDetector(config.planner.yolo_confidence)
+                detector = YOLOWorldDetector(config.planner.yolo_confidence)
             else:
                 detector = YOLOv7Detector(config.planner.yolo_confidence)
             # else YoloV8Detector(config.planner.yolo_confidence)

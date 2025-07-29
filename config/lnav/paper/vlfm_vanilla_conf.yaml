@@ -17,9 +17,9 @@ EvalConf:
   goal_query_processing: "vanilla"
 
 config: [
-  ../mon/controller_habitat.yaml, # Default Habitat Controller
-  ../mon/mapping_conf_sim.yaml,       # Default Mapping Configuration
-  ../mon/planning_conf.yaml       # Default Planning Configuration
+  ../../mon/controller_habitat.yaml, # Default Habitat Controller
+  ../../mon/mapping_conf_sim.yaml,       # Default Mapping Configuration
+  ../../mon/planning_conf.yaml       # Default Planning Configuration
 ]
 
 MappingConf:
