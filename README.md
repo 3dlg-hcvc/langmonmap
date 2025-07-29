@@ -25,12 +25,9 @@ conda create -n langnav python=3.9 cmake=3.14.0
 conda activate langnav
 ```
 
-Install Habitat-sim v0.2.5, following instructions from [here](https://github.com/facebookresearch/habitat-sim/tree/v0.2.5)
+Install Habitat-sim v0.2.5, following instructions from [here](https://github.com/facebookresearch/habitat-sim/tree/v0.2.5). In case you encounter issues with Habitat-sim installation, please refer [here](https://github.com/facebookresearch/habitat-sim/tree/v0.2.5?tab=readme-ov-file#common-testing-issues) or [here](https://github.com/facebookresearch/habitat-sim/issues) for common issues, or reach out to the Habitat team.
 ```
-git clone --branch v0.2.5 https://github.com/facebookresearch/habitat-sim.git
-cd habitat-sim
-python setup.py build_ext --parallel 1 install
-cd ..
+conda install habitat-sim=0.2.5 -c conda-forge -c aihabitat
 ```
 
 Install Habitat-lab
@@ -53,6 +50,7 @@ git clone https://github.com/WongKinYiu/yolov7
 
 Build planning utilities:
 ```
+sudo apt-get install libeigen3-dev
 python3 -m pip install ./planning_cpp/
 ```
 
@@ -73,7 +71,7 @@ ln -s <path_to_hssd> fphab
 
 ### Download LangNav dataset
 Follow HuggingFace [LangNav](https://huggingface.co/datasets/3dlg-hcvc/langnav) dataset to download the data splits.
-Place inside ``datasets/langnav''.
+Place inside ``datasets/langnav''. Please refer to the HF [documentation](https://huggingface.co/docs/hub/en/datasets-downloading#using-git) to know more about downloading HF datasets.
 
 ## Running the code
 ### 1. Run evaluation
