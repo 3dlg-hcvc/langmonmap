@@ -9,6 +9,7 @@ Recent progress in large vision–language models has driven improvements in lan
 We address this gap with LangNav, an open-set dataset specifically created to test an agent’s ability to locate objects described at different levels of detail, from broad category names to fine attributes and object–object relations. Every description in LangNav was manually checked, yielding a lower error rate than existing lifelong- and semantic-navigation datasets. On top of LangNav we build LangNavBench, a benchmark that measures how well current semantic-navigation methods understand and act on these descriptions while moving toward their targets. LangNavBench allows to systematically compare models on their handling of attributes, spatial and relational cues, and category hierarchies, offering the first thorough, language-centred evaluation of embodied navigation systems. We also present  Multi-Layered Feature Map (MLFM), a method that builds a queryable multi-layered semantic map, particularly effective when dealing with small objects or instructions involving spatial relations. MLFM outperforms state-of-the-art mapping-based navigation baselines on the LangNav dataset.
 
 ## Code setup
+We used Ubuntu 20.04.6 with cuda version 12.2 to install our code.
 
 ### 1. Clone the repository
 ```
