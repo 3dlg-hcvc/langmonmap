@@ -5,6 +5,7 @@ import numpy as np
 from vision_models.base_model import BaseModel
 from detectron2.data.detection_utils import read_image
 import detectron2.data.transforms as T
+import torch.nn as nn
 from torch.nn import functional as F
 from fvcore.common.checkpoint import Checkpointer
 import open_clip
@@ -55,7 +56,7 @@ class ClipModel(torch.nn.Module, BaseModel):
             # self.stream_txt = cuda.Stream()
 
         else:
-            name, pretrain = ('convnext_large_d_320', 'laion2b_s29b_b131k_ft_soup')
+            name, pretrain = ('convnext_large_d_320', 'laion2b_s29b_b131k_ft_soup') # ('ViT-H-14', 'laion2b_s32b_b79k')  # 1024-D model
             clip_model, _, clip_preprocess = open_clip.create_model_and_transforms(
                 name,
                 pretrained=pretrain,
@@ -111,9 +112,17 @@ class ClipModel(torch.nn.Module, BaseModel):
             else:
                 text_feats = text_feats.permute(1, 0).unsqueeze(0)
                 sim = torch.zeros((image_feats.shape[2:])).unsqueeze(0)
-                for k in range(image_feats.shape[-1]-1):
-                    sim[:, :, :, k] = torch.einsum('bchwl, bcl -> bhw', image_feats[:, :, :, :, k:k+filter_height], text_feats)
+                if text_feats.shape[-1] <= 2:
+                    for k in range(image_feats.shape[-1]-1):
+                        sim[:, :, :, k] = torch.einsum('bchwl, bcl -> bhw', image_feats[:, :, :, :, k:k+filter_height], text_feats)
+                elif text_feats.shape[-1] == 9:
+                    text_feats = text_feats.reshape(1,-1,3,3)
+                    similarity = torch.einsum('bchwl, bchwl -> bchwl', image_feats, text_feats)
+
             return sim
+        elif self.fuse_similarity == "object_relation":
+            # compute similarities with the relation graph
+            pass
 
         if len(image_feats.shape) == 3:
             similarity = torch.einsum('bcx, bc -> bx', image_feats, text_feats)
@@ -263,6 +272,28 @@ class ClipModel(torch.nn.Module, BaseModel):
                 class_embeddings = self.clip_model.encode_text(texts.to("cuda"))
                 return F.normalize(class_embeddings, dim=1)
 
+    def _apply_proj(self, x: torch.Tensor, proj):
+        """x: [1, in_dim]. proj: nn.Linear or (in_dim, out_dim) tensor/param."""
+        if proj is None:
+            return x
+        if isinstance(proj, nn.Linear):
+            return proj(x)
+        # Parameter or Tensor, shaped (in_dim, out_dim)
+        return x @ (proj if isinstance(proj, torch.Tensor) else proj.data)
+
+    def cosine_from_raw_preproj(self, img_feat_1024,device='cuda'):
+        # Wrap into 2D tensors
+        xi = torch.as_tensor(img_feat_1024, dtype=torch.float32, device=device).unsqueeze(0)  # [1,1024]
+
+        # Find projections
+        img_proj = getattr(getattr(self.clip_model, "visual", self.clip_model), "proj", None)
+        if img_proj is None:
+            img_proj = getattr(self.clip_model, "image_projection", None)
+
+        with torch.no_grad():
+            zi = self._apply_proj(xi, img_proj).float()   # [1, D]
+            zi = F.normalize(zi, dim=-1)
+            return zi
 
 if __name__ == "__main__":
     import time

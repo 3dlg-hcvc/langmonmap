@@ -73,6 +73,7 @@ class LanguageNavEpisode():
     goals: list = None
     start_room: Optional[str] = None
     shortest_paths: Optional[List[List]] = None
+    shortest_dists: Optional[list] = None
     object_category: Optional[str] = None
     object_instance_id: Optional[int] = None
     instructions: Optional[List[str]] = None

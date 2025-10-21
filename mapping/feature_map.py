@@ -7,12 +7,15 @@ from mapping import (precompute_gaussian_kernel_components,
                      precompute_gaussian_sum_els, gaussian_kernel_sum,
                      compute_gaussian_kernel_components,
                      detect_frontiers,
+                     relation_graph
                      )
+from mapping.mlfm_utils import *
 from config import MappingConf
 
 from onemap_utils import ceildiv
 
 import time
+import collections
 
 # enum
 from enum import Enum
@@ -34,10 +37,15 @@ import warnings
 
 # cv2
 import cv2
+import open3d as o3d
 
 # functools
 from functools import wraps
 
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
+from PIL import Image
 
 def rotate_pcl(
         pointcloud: torch.Tensor,
@@ -187,6 +195,18 @@ class OneMap:
 
         self._iters = 0
 
+        # initialize relation graph
+        self.rel_graph = relation_graph.RelationGraph()
+        self.relation_graph_conf_threshold = config.relation_graph_conf_threshold
+
+        self.store_raw_images = config.store_raw_images
+        self.images_to_store = config.images_to_store
+        self.use_gpt = config.use_gpt
+        if self.store_raw_images:
+            self.image_map = collections.defaultdict(collections.deque)
+            self.checked_image_map = []
+
+
     def reset(self):
         # Reset value map
         if self.layered:
@@ -229,6 +249,13 @@ class OneMap:
         self._iters = 0
         self.agent_height_0 = None
 
+        # reset relation graph
+        self.rel_graph = relation_graph.RelationGraph()
+
+        if self.store_raw_images:
+            self.image_map = collections.defaultdict(collections.deque)
+            self.checked_image_map = []
+
     def reset_updated_mask(self):
         if self.layered:
             self.updated_mask = torch.zeros((self.n_cells, self.n_cells, self.n_layers), dtype=torch.bool).to(self.map_device)
@@ -242,6 +269,10 @@ class OneMap:
         # Reset navigable map
         # self.navigable_map = np.ones((self.n_cells, self.n_cells), dtype=bool)
         # self.occluded_map = np.zeros((self.n_cells, self.n_cells), dtype=bool)
+
+    def reset_checked_image_map(self):
+        if self.store_raw_images:
+            self.checked_image_map = []
 
     def set_camera_matrix(self,
                           camera_matrix: np.ndarray
@@ -261,7 +292,10 @@ class OneMap:
                values: torch.Tensor,
                depth: np.ndarray,
                tf_camera_to_episodic: np.ndarray,
-               artifical_obstacles: Optional[List[Tuple[float]]] = None
+               artifical_obstacles: Optional[List[Tuple[float]]] = None,
+               query_text_features: Optional[torch.Tensor] = None,
+               agent_pos: Optional[list[int]] = None,
+               raw_image: Optional[np.ndarray] = None,
                ) -> None:
         """
         Updates the map with values by projecting them into the map from depth
@@ -288,8 +322,8 @@ class OneMap:
                 obstacle_mapped, obstcl_confidence_mapped) = self.project_dense_layered(values, torch.Tensor(depth).to("cuda"),
                                                                                 torch.tensor(tf_camera_to_episodic),
                                                                                 self.fx, self.fy,
-                                                                                self.cx, self.cy)
-                self.fuse_maps_layered(confidences_mapped, values_mapped, obstacle_mapped, obstcl_confidence_mapped, artifical_obstacles)
+                                                                                self.cx, self.cy, raw_image)
+                self.fuse_maps_layered(confidences_mapped, values_mapped, obstacle_mapped, obstcl_confidence_mapped, artifical_obstacles, query_text_features, agent_pos)
             elif (values.shape[0] == 1 and values.shape[1] == 1):
                 (confidences_mapped, values_mapped,
                 obstacle_mapped, obstcl_confidence_mapped) = self.project_dense_vlfm(values, torch.Tensor(depth).to("cuda"),
@@ -306,13 +340,22 @@ class OneMap:
                 self.fuse_maps(confidences_mapped, values_mapped, obstacle_mapped, obstcl_confidence_mapped, artifical_obstacles)
         else:
             raise Exception("Provided Value observation of unsupported format")
+        
+        if self.store_raw_images:
+            # store image at the location from where it was observed
+            # store only latest few images
+            if (agent_pos[0], agent_pos[1]) in self.image_map and len(self.image_map[(agent_pos[0], agent_pos[1])]) >= self.images_to_store:
+                self.image_map[(agent_pos[0], agent_pos[1])].popleft()
+            self.image_map[(agent_pos[0], agent_pos[1])].append(raw_image)   # keep appending all images for now
 
     def fuse_maps_layered(self,
                   confidences_mapped: torch.Tensor,
                   values_mapped: torch.Tensor,
                   obstacle_mapped: torch.Tensor,
                   obstcl_confidence_mapped: torch.Tensor,
-                  artifical_obstacles: Optional[List[Tuple[float]]] = None
+                  artifical_obstacles: Optional[List[Tuple[float]]] = None,
+                  query_text_features: Optional[torch.Tensor] = None,
+                  agent_pos: Optional[list[int]] = None,
                   ) -> None:
         """
         Fuses the mapped values into the value map using the confidence estimates and tracked confidences
@@ -376,6 +419,9 @@ class OneMap:
 
             self.checked_map = (np.nan_to_num(1.0 / self.checked_conf_map.cpu().numpy())
                                 < self.checked_map_threshold)
+
+            # update relation graph for the whole map
+            self.update_relation_graph(indices.cpu().numpy(), query_text_features, agent_pos)
 
     def fuse_maps(self,
                   confidences_mapped: torch.Tensor,
@@ -446,12 +492,14 @@ class OneMap:
         else:
             indices = confidences_mapped.indices()
             indices_obstacle = obstacle_mapped.indices()
-            
+
             self.updated_mask[indices[0], indices[1]] = True
             self.feature_map[indices[0], indices[1]] = (self.feature_map[indices[0], indices[1]] + values_mapped.values().data)/2
 
             # Obstacle Map update
-            self.obstacle_map[indices_obstacle[0], indices_obstacle[1]] = torch.maximum(self.obstacle_map[indices_obstacle[0], indices_obstacle[1]], obstacle_mapped.values().data.squeeze())[0]
+            obs_max = torch.maximum(self.obstacle_map[indices_obstacle[0], indices_obstacle[1]], obstacle_mapped.values().data.squeeze())
+            if len(obs_max) > 0:
+                self.obstacle_map[indices_obstacle[0], indices_obstacle[1]] = obs_max[0]
 
             self.occluded_map = (self.obstacle_map > self.obstacle_map_threshold).cpu().numpy()
             if artifical_obstacles is not None:
@@ -462,6 +510,186 @@ class OneMap:
 
             self.fully_explored_map = (self.obstacle_map > self.fully_explored_threshold).cpu().numpy()
             self.checked_map = (self.obstacle_map > self.checked_map_threshold).cpu().numpy()
+
+    def neighbors_from_bounds(self, x_lo, x_hi, y_lo, y_hi, z_lo, z_hi,
+                          center: list = None, drop_center=True):
+
+        # clamp to grid
+        xs = np.arange(max(0, x_lo), min(self.n_cells-1, x_hi) + 1)
+        ys = np.arange(max(0, y_lo), min(self.n_cells-1, y_hi) + 1)
+        zs = np.arange(max(0, z_lo), min(self.n_layers-1, z_hi) + 1)
+
+        # Cartesian product of indices
+        nbrs = np.array(np.meshgrid(xs, ys, zs, indexing='ij')).reshape(3, -1).T
+
+        # Remove the center only if it’s uniquely defined (odd-length spans)
+        if drop_center:
+            x, y, z = center
+            mask_center = ~((nbrs[:,0]==x) & (nbrs[:,1]==y) & (nbrs[:,2]==z))
+            nbrs = nbrs[mask_center]
+
+        return nbrs
+
+    def get_neighbor_indices(self, x, y, z, _boundaries):
+
+        xs = np.arange(max(x-_boundaries[0], 0), min(x+_boundaries[0], self.n_cells-1)+1)
+        ys = np.arange(max(y-_boundaries[2], 0), min(y+_boundaries[1], self.n_cells-1)+1)
+        zs = np.arange(max(z-_boundaries[2], 0), min(z+_boundaries[2], self.n_layers-1)+1)
+
+        # all 8 neighbors in the same layer + center
+        neighbors = np.array(np.meshgrid(xs, ys, zs, indexing='ij')).reshape(3, -1).T
+
+        # remove the center (x,y,z)
+        mask_center = ~((neighbors[:,0]==x) & (neighbors[:,1]==y) & (neighbors[:,2]==z))
+        neighbors = neighbors[mask_center]
+        return neighbors
+
+    def update_relation_graph(
+        self,
+        updated_indices: np.ndarray,
+        query_text_features: Optional[torch.Tensor] = None,
+        agent_pos: Optional[list[int]] = None,
+    ):
+
+        if query_text_features.shape[0] <= 2 or updated_indices.shape[-1] == 0:
+            return
+
+        agent_pos = agent_pos.astype(np.int64)
+        node_query_features = query_text_features[:2, :]
+
+        # update only for the updated indices
+        x_dim, y_dim, z_dim = updated_indices[0], updated_indices[1], updated_indices[2]
+
+        # compute similarity scores and check with threhold
+        similarity_map = torch.einsum('hwlc, nc -> hwln', self.feature_map, node_query_features)
+        similarity_map = (similarity_map + 1.0) / 2.0   # map to [0-1]
+
+        # find most promising areas in the map
+        for i in range(2):
+            # we do binary relations
+
+            # find topk similarity score values
+            similarity = similarity_map[x_dim, y_dim, z_dim, i].topk(k=2)
+            for sim in similarity[0]:
+                # find x,y,z
+                s = similarity_map[:, :, :, i] == sim
+                x, y, z = torch.nonzero(s)[0]
+                x, y, z = x.item(), y.item(), z.item()
+
+                if sim.item() >= self.relation_graph_conf_threshold:
+                    node_info = {
+                        "vis_feats": self.feature_map[x,y,z].cpu(),
+                        "map_location": (x,y,z),
+                        "map_extent": [[x,y,z]]
+                    }
+                    created = False
+
+                    # check existing nodes in the graph to get relation
+                    other_nodes, has_nodes = self.rel_graph.has_nodes()
+                    if not has_nodes:
+                        parent_node_id, _ = self.rel_graph.add_landmark(node_info)
+                        created = True
+                        continue
+
+                    xy_span = int(np.ceil(1.0 * 100 * self.cell_size))
+                    for other in other_nodes:
+                        # find relation based on map location
+                        other_node_id = other[0]
+                        other_map_loc = other[1]["info"]["map_location"]
+                        xy_dist = np.linalg.norm(other_map_loc[:2] - np.array([x,y]))
+                        z_dist = abs(z - other_map_loc[2])
+                        if xy_dist > xy_span or z_dist > 1:
+                            continue
+
+                        # check if it's the same object
+                        sim_other_node = torch.einsum('c, c -> ', self.feature_map[x,y,z].cpu(), other[1]["info"]["vis_feats"])
+                        sim_other_node = (sim_other_node + 1.0) / 2.0
+                        if sim_other_node.item() > 0.8:
+                            # update the other object with map_extent
+                            self.rel_graph.update_landmark_extent(other_node_id, map_extent=[x,y,z], vis_feats=self.feature_map[x,y,z].cpu())
+                            created = True
+                            # merge nodes into one if they are very similar - mark the expanse as an indicator of size?
+                            # self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"self": True})
+                            break
+
+                    if not created:
+                        parent_node_id, _ = self.rel_graph.add_landmark(node_info)
+                        created = True
+
+                        for other in other_nodes:
+                            # find relation based on map location
+                            other_node_id = other[0]
+                            other_map_loc = other[1]["info"]["map_location"]
+                            xy_dist = np.linalg.norm(other_map_loc[:2] - np.array([x,y]))
+                            z_dist = abs(z - other_map_loc[2])
+                            if xy_dist > xy_span or z_dist > 1:
+                                continue
+
+                            # objects are nearby - figure out the relation
+                            self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"near": True})
+                            if z > other_map_loc[2]:
+                                self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"below": True})
+                            elif z < other_map_loc[2]:
+                                self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"above": True})
+                                self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"on": True}) 
+                            else:
+                                # same z
+                                xy_span_strict = int(np.ceil(0.5 * 100 * self.cell_size))
+                                if xy_dist <= xy_span_strict:
+                                    self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"next to": True})
+
+                                # figure out ego left/right
+                                curr_obj_extent = np.array(self.rel_graph.get_landmark_extent(parent_node_id))
+                                other_obj_extent = np.array(self.rel_graph.get_landmark_extent(other_node_id))
+                                # find locations relative to the agent pos
+                                curr_obj_extent[:, :2] -= agent_pos[:2]
+                                A_min, A_max = curr_obj_extent[:,:2].min(axis=0), curr_obj_extent[:,:2].max(axis=0)
+                                other_obj_extent[:, :2] -= agent_pos[:2]
+                                B_min, B_max = other_obj_extent[:,:2].min(axis=0), other_obj_extent[:,:2].max(axis=0)
+                                
+                                eps = 0.0
+                                if A_min[0] == A_max[0]:
+                                    if (A_min[0] + eps) < B_min[0]:
+                                        self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"left": True})
+                                    else:
+                                        self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"right": True})
+                                else:
+                                    cxB = (B_min[0] + B_max[0]) * 0.5
+                                    left_part = max(0.0, min(cxB, A_max[0]) - A_min[0])
+                                    wA = max(1e-8, A_max[0] - A_min[0])
+                                    if (left_part / wA) >= 0.7:
+                                        self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"left": True})
+                                    else:
+                                        right_part = max(0.0, A_max[0] - max(cxB, A_min[0]))
+                                        wA = max(1e-8, A_max[0] - A_min[0])
+                                        if (right_part / wA) >= 0.7:
+                                            self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"right": True})
+
+                                if ((A_min[0] >= B_min[0] - eps) and (A_min[1] >= B_min[1] - eps) and (A_max[0] <= B_max[0] + eps) and (A_max[1] <= B_max[1] + eps)):
+                                    self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"inside": True})
+                                    
+                                    # when projected on a topdown, on might look like inside
+                                    self.rel_graph.add_relation(from_node_id=parent_node_id, to_node_id=other_node_id, relation_info={"on": True})  
+
+    def rows_not_in(self, a: np.ndarray, b: np.ndarray, return_index: bool = False):
+        """
+        Return rows of `a` that are NOT present as rows in `b`.
+        Works for integer or exact-equality float comparisons.
+        """
+        if a.shape[1] != b.shape[1]:
+            raise ValueError("a and b must have the same number of columns")
+
+        def _asvoid(x):
+            x = np.ascontiguousarray(x)
+            return x.view(np.dtype((np.void, x.dtype.itemsize * x.shape[1]))).ravel()
+
+        av = _asvoid(a)
+        bv = _asvoid(b)
+        mask = ~np.isin(av, bv)
+        if return_index:
+            idx = np.nonzero(mask)[0]
+            return a[idx], idx
+        return a[mask]
 
     @torch.no_grad()
     # @torch.compile
@@ -823,14 +1051,16 @@ class OneMap:
         #                                 new_map.element_size() * new_map.values().shape[
         #                                     0] * self.feature_dim / 1024 / 1024))
         return torch.sparse_coo_tensor(all_ids, coalesced_scores, (self.n_cells, self.n_cells, 1), is_coalesced=True).cpu(), torch.sparse_coo_tensor(all_ids, coalesced_map_data, (self.n_cells, self.n_cells, self.feature_dim), is_coalesced=True).cpu(), obstacle_mapped.cpu(), obstcl_confidence_mapped.cpu()
-    
+
     @torch.no_grad()
     # @torch.compile
     def project_dense_layered(self,
                       values: torch.Tensor,
                       depth: torch.Tensor,
                       tf_camera_to_episodic: torch.Tensor,
-                      fx, fy, cx, cy
+                      fx, fy, cx, cy,
+                      raw_image: Optional[np.ndarray] = None,
+                      viz: Optional[bool] = False,
                       ) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor):
         """
         Projects the dense features into the map
@@ -918,6 +1148,44 @@ class OneMap:
         rotated_pcl[:, :2] += torch.tensor([cam_x, cam_y], device='cuda')
 
         values_aligned = values.reshape((-1, values.shape[-1]))
+
+        if viz:
+            # save out point cloud
+            H, W = depth.shape
+            depth_m = depth.cpu().numpy().astype(np.float32) / float(1.0)
+            jj, ii = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+            Z = depth_m
+            valid = Z > 0
+            X = (jj - cx) * Z / fx
+            Y = (ii - cy) * Z / fy
+            pts_cam = np.stack([X, Y, Z], axis=-1)[valid]  # [N,3]
+            points = pts_cam.astype(np.float32)
+            colors = (raw_image.astype(np.float32) / 255.0)[valid]
+            pc = o3d.geometry.PointCloud()
+            pc.points = o3d.utility.Vector3dVector(points.astype(np.float64))
+            pc.colors = o3d.utility.Vector3dVector(colors.astype(np.float64))
+
+            # Optional: downsample for smoother viz
+            pc = pc.voxel_down_sample(voxel_size=0.01)  # meters; adjust as needed
+
+            # Estimate normals (optional, improves shading in some viewers)
+            pc.estimate_normals(
+                search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30)
+            )
+
+            _t = time.time()
+            out_ply = f"cloud_{_t}.ply"
+            o3d.io.write_point_cloud(out_ply, pc)
+            print(f"Saved PLY: {out_ply}")
+
+            Image.fromarray(raw_image).save(f"rgb_{_t}.png")
+
+            obs_k *= 255.0/depth_m.max()
+            obs_k = obs_k[..., np.newaxis]
+            obs_k = np.concatenate([obs_k for _ in range(3)], axis=2)
+            Image.fromarray(obs_k).save(f"depth_{_t}.png")
+
+            # o3d.visualization.draw_geometries([pc])
 
         pcl_grid_ids = torch.floor(rotated_pcl.clone()[:, :2] / self.cell_size).to(torch.int32)
         pcl_grid_ids[:, 0] += self.map_center_cells[0]
@@ -1157,6 +1425,104 @@ class OneMap:
         return ((px - self.map_center_cells[0].item()) * self.cell_size,
                 (py - self.map_center_cells[1].item()) * self.cell_size)
 
+    # def hdbscan_cosine_grid_3d(
+    #     self,
+    #     feat_hwld: np.ndarray,
+    #     min_cluster_size: int = 200,
+    #     min_samples: int = None,
+    #     pca_dim: int = None,
+    #     spatial_weight: float = 0.0,
+    #     coord_weights: tuple[float, float, float] = None,
+    #     mask: np.ndarray = None,
+    #     seed: int = 0,
+    # ):
+    #     """
+    #     Cluster a 3D grid of CLIP features with HDBSCAN (cosine metric).
+
+    #     Args:
+    #         feat_hwld: (H, W, L, D) float array; L is vertical.
+    #         min_cluster_size: HDBSCAN min cluster size (tune to your grid).
+    #         min_samples: Optional HDBSCAN min_samples (None → heuristic).
+    #         pca_dim: If set, PCA-reduce features to this dim (then re-normalize).
+    #         spatial_weight: If >0, append standardized (x,y,z) coords * this weight.
+    #         coord_weights: Per-axis weights for coords. Scalar or (wx, wy, wz).
+    #         mask: Optional boolean (H, W, L); True = keep. Otherwise, keep finite rows.
+    #         seed: Random state for PCA, not for HDBSCAN.
+
+    #     Returns:
+    #         labels: (H, W, L) int32; -1 denotes noise.
+    #         model: the fitted HDBSCAN object (access probabilities_, outlier_scores_).
+    #     """
+    #     H, W, L, D = feat_hwld.shape
+
+    #     # Flatten features
+    #     X = feat_hwld.reshape(-1, D).astype(np.float32)
+
+    #     # Valid points mask
+    #     if mask is not None:
+    #         valid = mask.reshape(-1)
+    #     else:
+    #         valid = np.all(np.isfinite(X), axis=1)
+
+    #     Xv = X[valid]
+
+    #     ### Umap
+    #     umap_model = UMAP(n_components=5)
+    #     reduced_embeddings = umap_model.fit_transform(Xv)
+
+    #     clusterer = HDBSCAN(min_cluster_size=20)
+    #     cluster_labels = clusterer.fit_predict(reduced_embeddings)
+
+    #     labels = np.full(H*W*L, -1, dtype=np.int32)
+    #     labels[valid] = cluster_labels
+    #     labels = labels.reshape(H, W, L)
+
+    #     return labels, clusterer
+
+        # L2-normalize (cosine geometry)
+        # Xv /= (np.linalg.norm(Xv, axis=1, keepdims=True) + 1e-8)
+
+        # # Optional PCA for speed/memory; re-normalize afterward for cosine
+        # if pca_dim is not None and pca_dim < Xv.shape[1]:
+        #     pca = PCA(n_components=pca_dim, random_state=seed)
+        #     Xv = pca.fit_transform(Xv).astype(np.float32)
+        #     Xv /= (np.linalg.norm(Xv, axis=1, keepdims=True) + 1e-8)
+
+        # Optional spatial regularization via (x,y,z)
+        # if spatial_weight and spatial_weight > 0:
+        #     # Coordinates aligned with flattening order (C-order)
+        #     ii, jj, kk = np.indices((H, W, L))  # i=x(row), j=y(col), k=z(layer)
+        #     coords = np.stack([ii.ravel(), jj.ravel(), kk.ravel()], axis=1).astype(np.float32)
+        #     coords = coords[valid]
+
+        #     # Standardize then weight
+        #     coords = (coords - coords.mean(0)) / (coords.std(0) + 1e-8)
+        #     if coord_weights is None:
+        #         cw = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        #     else:
+        #         cw = np.asarray(coord_weights, dtype=np.float32)
+        #         if cw.size == 1:
+        #             cw = np.repeat(cw, 3)
+        #     Xv = np.hstack([Xv, spatial_weight * coords * cw]).astype(np.float32)
+
+        # HDBSCAN with cosine distance (1 - cosine similarity)
+        # clusterer = HDBSCAN(
+        #     min_cluster_size=min_cluster_size,
+        #     min_samples=min_samples,
+        #     metric='cosine',
+        # )
+        # lab_v = clusterer.fit_predict(Xv)
+
+        # # Scatter back to (H,W,L)
+        # labels = np.full(H*W*L, -1, dtype=np.int32)
+        # labels[valid] = lab_v
+        # labels = labels.reshape(H, W, L)
+
+        # # save_clusters_per_slice(labels, out_dir="cluster_images", top_k=50, seed=0, with_outlines=True, dpi=300)
+        # save_clusters_grid_figure(labels, out_path="cluster_images/all_slices.png",
+        #                   top_k=50, seed=0, with_outlines=True, dpi=200)
+
+        # return labels, clusterer
 
 if __name__ == "__main__":
     rr.init("rerun_example_points3d", spawn=False)

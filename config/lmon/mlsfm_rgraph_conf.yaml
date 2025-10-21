@@ -1,20 +1,20 @@
 EvalConf:
   multi_object: True
   max_steps: 500
-  max_explore_steps: 200
+  max_explore_steps: 100
   max_dist: 1.5
   is_gibson: False
   object_nav_path: "datasets/langmon/eval/langnav/langnav/test"
   num_seq: 3
   scene_path: "datasets/scene_datasets/fphab/"
-  results_path: "solar/results_mlsfm_test_mini/"
-  log_rerun: False
-  save_video: True
+  results_path: "results_mlsfm_rgraph/"
+  log_rerun: True
+  save_video: False
   save_maps: False
   use_pointnav: False
   square_im: True
   goal_query_type: "detailed" # "coarse", "fine", "detailed"
-  goal_query_processing: "extract_and_split_support" #"extract_and_split_support" #"extract"
+  goal_query_processing: "extract_graph" #"extract_and_split_support" #"extract_and_split_support" #"extract"
 
 config: [
   ../mon/controller_habitat.yaml, # Default Habitat Controller
@@ -25,8 +25,9 @@ config: [
 MappingConf:
   layered: True
   z_bins_lower: -1.0
-  z_bins_upper: 1.0
-  z_bins_step: 0.8
+  z_bins_upper: 0.8
+  z_bins_step: 0.5
+  relation_graph_conf_threshold: 0.50
 
 PlanningConf:
-  fuse_similarity: "layerwisemax"
+  fuse_similarity: "object_relation" 

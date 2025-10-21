@@ -33,7 +33,7 @@ def load_hm3d_multi_episodes(episodes: List[LangMonEpisode], scene_data: Dict[st
                     episode = LangMonEpisode(
                         scene_id=ep['scene_id'],
                         scene_dataset_config=ep['scene_dataset_config'],
-                        episode_id=ep['scene_id']+'__'+ep['episode_id'],
+                        episode_id=ep['scene_id']+'__'+str(ep['episode_id']),
                         start_position=ep['start_position'],
                         start_rotation=ep['start_rotation'],
                         goals=ep['goals'],

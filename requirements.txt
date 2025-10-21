@@ -1,21 +1,32 @@
-# numpy
+numpy==1.24.0
 einops
 salesforce-lavis
 rerun-sdk
-# timm>=1.0.7
 git+https://github.com/facebookresearch/detectron2.git
-# git+https://github.com/facebookresearch/habitat-sim.git@v0.2.5
 inference-gpu[yolo-world]
-supervision
+supervision==0.25.0
 spock-config
 depth_camera_filtering@git+https://github.com/naokiyokoyama/depth_camera_filtering
-# habitat-baselines==0.2.520230802 #0.2.420230405
-# habitat-lab==0.2.520230802 #0.2.420230405
+habitat-lab==0.2.520230802
+habitat-baselines==0.2.520230802
 git+https://github.com/ChaoningZhang/MobileSAM.git
 scikit-fmm
 ultralytics==8.2.73
 transforms3d
 protobuf==3.20.1
 git+https://github.com/xb534/SED/#subdirectory=open_clip
+git+https://github.com/xinyu1205/recognize-anything.git
 scikit-learn
 spock-config==3.1.0
+gdown 
+torch
+torchvision
+torchaudio 
+meson
+timm>=1.0.7
+hdbscan
+transformers
+qwen-vl-utils
+pillow
+accelerate
+bitsandbytes

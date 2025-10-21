@@ -1,6 +1,14 @@
 from eval.mlsfm_policy import HabitatMultiEvaluator
 from config import load_eval_config
 from eval.actor import MONActor
+import random
+import numpy as np
+import torch
+
+seed = 120
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
 
 def main():
     # Load the evaluation configuration

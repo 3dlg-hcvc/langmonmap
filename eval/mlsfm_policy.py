@@ -1,14 +1,15 @@
 # eval utils
 import csv
 import gc
-
+import collections
 import torch
 from eval import within_fov_cone
 from eval.actor import Actor
 from eval.dataset_utils.gibson_dataset import load_gibson_episodes
 from mapping import rerun_logger
 from config import EvalConf
-from onemap_utils import monochannel_to_inferno_rgb, generate_video, add_sim_maps_to_image
+from onemap_utils import monochannel_to_inferno_rgb, generate_video, add_sim_maps_to_image, add_sim_maps_to_image_paper, monochannel_to_gray
+from mapping.mlfm_utils import *
 from eval.dataset_utils import *
 from habitat.utils.visualizations import maps
 import matplotlib.pyplot as plt
@@ -156,7 +157,7 @@ class HabitatMultiEvaluator:
         state_dir = os.path.join(self.results_path, "state")
         os.makedirs(state_dir, exist_ok=True)
         self.exclude_ids = [p.split('state_')[-1].split('.txt')[0] for p in os.listdir(state_dir)]
-        self.include_ids = []
+        self.include_ids = [] #['104348028_171512877__0']
         os.makedirs(os.path.join(self.results_path, 'trajectories'), exist_ok=True)
         os.makedirs(os.path.join(self.results_path, 'similarities'), exist_ok=True)
         os.makedirs(os.path.join(self.results_path, 'saved_maps'), exist_ok=True)
@@ -390,6 +391,8 @@ class HabitatMultiEvaluator:
                         # Create a row for each sequence in the experiment
 
                         for seq_num, value in enumerate(state_values):
+                            if seq_num >= 3:
+                                continue
                             object_goals = episodes_json[experiment_num].goals[seq_num]
                             language_properties = object_goals["extras"]["language_properties"]
                             attribute_types = language_properties["features"]
@@ -408,22 +411,30 @@ class HabitatMultiEvaluator:
                                 attribute_values.append('on')
                                 attributes.append({"support": ["on"]})
                                 attribute_count += 1
+                                
+                            if "spatial_rel_type" in object_goals and len(object_goals["spatial_rel_type"]) > 0:
+                                attribute_values.append(object_goals["spatial_rel_type"])
+                                attributes.append({object_goals["spatial_rel_type"]: [object_goals["spatial_rel"]]})
+                                attribute_count += 1
 
                             total_experiments_run += 1
 
                             ppl = 0
                             map_size = 0
-                            poses = np.genfromtxt(
-                                    os.path.join(
-                                        pose_dir,
-                                        "poses_"
-                                        + str(experiment_num)
-                                        + "_"
-                                        + str(seq_num)
-                                        + ".csv",
-                                    ),
-                                    delimiter=",",
-                                )
+                            try:
+                                poses = np.genfromtxt(
+                                        os.path.join(
+                                            pose_dir,
+                                            "poses_"
+                                            + str(experiment_num)
+                                            + "_"
+                                            + str(seq_num)
+                                            + ".csv",
+                                        ),
+                                        delimiter=",",
+                                    )
+                            except:
+                                continue
                             if len(poses.shape) == 1:
                                 poses = poses.reshape((1, 4))
                             path_length = np.linalg.norm(
@@ -586,9 +597,10 @@ class HabitatMultiEvaluator:
                     for state in states
                 }
             )
-            progress = calc_prog_per_episode(group, 3)
+            progress = calc_prog_per_episode(group, total)
             ppl = calc_ppl_per_episode(group)
             s = progress[progress == 1]
+            result["success_count"] = progress[progress > 0].count()
             result["Progress"] = progress.mean()
             result["PPL"] = ppl.mean()
             # result["opt_PL"] = group["opt_path"].mean()
@@ -743,7 +755,7 @@ class HabitatMultiEvaluator:
         attribute_table = (
             attribute_results.iloc[:, 0]
             .to_frame()
-            .join(attribute_results.iloc[:, 1:].applymap(format_percentages))
+            .join(attribute_results.iloc[:, 1:]) #.applymap(format_percentages))
         )
         print(f"Results by Attribute:")
         print(tabulate(attribute_table, headers="keys", tablefmt="pretty", floatfmt=".2%"))
@@ -757,6 +769,7 @@ class HabitatMultiEvaluator:
         data_per_scene = data.groupby("scene")
         sr_per_scene = []
         ppl_per_scene = []
+        all_successful_episode_ids = collections.defaultdict(list)
         for scene, scene_data in data_per_scene:
             print(f"\nScene: {scene}")
             success_rates = []
@@ -766,6 +779,7 @@ class HabitatMultiEvaluator:
                 sequences = scene_data[scene_data["sequence"] == i]
                 if len(sequences) > 0:
                     successful_experiments = sequences[sequences["state"] == 1]
+                    all_successful_episode_ids[str(i)].extend(list(sequences[sequences["state"] == 1]["experiment"]))
                     ppl = sequences["ppl"].mean() * self.num_seq
                     success_rate = len(successful_experiments) / len(sequences)
 
@@ -787,6 +801,9 @@ class HabitatMultiEvaluator:
         sr_per_scene = np.mean(sr_per_scene, axis=0)
         ppl_per_scene = np.mean(ppl_per_scene, axis=0)
         print(f"PPL: {ppl_per_scene}, Success Rate: {sr_per_scene}")
+
+        with open(f"{self.results_path}/all_successful_episodes.json", "w") as f:
+            json.dump(all_successful_episode_ids, f)
 
         episode_results = (
             data.groupby("experiment").apply(calculate_percentages).reset_index()
@@ -987,7 +1004,16 @@ class HabitatMultiEvaluator:
                 else:
                     goal_query = current_obj['language_instruction']
 
-            if self.config.goal_query_processing == "mix":
+            if self.config.goal_query_processing == "extract_graph":
+                full_query = goal_query
+                text_graph = extract_graph_from_text(goal_query)
+                text_graph_queries = text_graph["nodes"]
+                if len(text_graph_queries) == 0:
+                    text_graph_queries = full_query.split('Find ')[-1].split('Go to ')[-1].split('.')[0]
+                elif len(text_graph["edges"]) > 0:
+                    text_graph_queries.extend([e["relation"] for e in text_graph["edges"]])
+                self.actor.set_queries(text_graph_queries, full_query)
+            elif self.config.goal_query_processing == "mix":
                 goal_query = current_obj['language_instruction']
                 full_query = goal_query
                 if "on " in goal_query:
@@ -995,11 +1021,26 @@ class HabitatMultiEvaluator:
                     self.actor.set_queries(goal_query, full_query)
                 else:
                     self.actor.set_query(goal_query)
-
-            elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "on " in goal_query:
+            elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and " on " in goal_query:
                 full_query = goal_query
                 goal_query = goal_query.split(' on ')[::-1]
                 self.actor.set_queries(goal_query, full_query)
+            elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "above " in goal_query:
+                full_query = goal_query
+                goal_query = goal_query.split(' above ')[::-1]
+                self.actor.set_queries(goal_query, full_query)
+            elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "below " in goal_query:
+                full_query = goal_query
+                goal_query = goal_query.split(' below ')
+                self.actor.set_queries(goal_query, full_query)
+            # elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "next to " in goal_query:
+            #     full_query = goal_query
+            #     goal_query = goal_query.split(' next to ')
+            #     # form kernel
+            #     goal_query_mod = [goal_query[1], goal_query[1], goal_query[1],
+            #                       goal_query[1], goal_query[0], goal_query[1],
+            #                       goal_query[1], goal_query[1], goal_query[1]]
+            #     self.actor.set_queries(goal_query_mod, full_query)
             else:
                 self.actor.set_query(goal_query)
             
@@ -1013,405 +1054,517 @@ class HabitatMultiEvaluator:
                 running_exploit = False
                 map_poses_and_obs = []
                 while steps < self.max_steps and running:
-                    # try:
-                    observations = self.sim.get_sensor_observations()
-                    # observations['depth'] = fill_depth_holes(observations['depth'])
-                    observations["state"] = self.sim.get_agent(0).get_state()
-                    pose = np.zeros((4,))
-                    pose[0] = -observations["state"].position[2]
-                    pose[1] = -observations["state"].position[0]
-                    pose[2] = observations["state"].position[1]
-                    # yaw
-                    orientation = observations["state"].rotation
-                    q0 = orientation.x
-                    q1 = orientation.y
-                    q2 = orientation.z
-                    q3 = orientation.w
-                    r = R.from_quat([q0, q1, q2, q3])
-                    # r to euler
-                    yaw, _, _1 = r.as_euler("yxz")
-                    pose[3] = yaw
+                    try:
+                        observations = self.sim.get_sensor_observations()
+                        # observations['depth'] = fill_depth_holes(observations['depth'])
+                        observations["state"] = self.sim.get_agent(0).get_state()
+                        pose = np.zeros((4,))
+                        pose[0] = -observations["state"].position[2]
+                        pose[1] = -observations["state"].position[0]
+                        pose[2] = observations["state"].position[1]
+                        # yaw
+                        orientation = observations["state"].rotation
+                        q0 = orientation.x
+                        q1 = orientation.y
+                        q2 = orientation.z
+                        q3 = orientation.w
+                        r = R.from_quat([q0, q1, q2, q3])
+                        # r to euler
+                        yaw, _, _1 = r.as_euler("yxz")
+                        pose[3] = yaw
 
-                    poses.append(pose)
-                    if self.save_maps:
-                        map_poses_and_obs.append(
-                            {
-                                "pose_xyzyaw": pose,
-                                "pose_map": self.actor.mapper.one_map.metric_to_px(
-                                    pose[0], pose[1]
+                        poses.append(pose)
+                        if self.save_maps:
+                            map_poses_and_obs.append(
+                                {
+                                    "pose_xyzyaw": pose,
+                                    "pose_map": self.actor.mapper.one_map.metric_to_px(
+                                        pose[0], pose[1]
+                                    ),
+                                    "obs_from_pose": observations,
+                                }
+                            )
+                        if self.log_rerun:
+                            rr.log("logs", rr.TextLog(f"\"{current_obj['language_instruction']}\""))
+                            cam_x = -self.sim.get_agent(0).get_state().position[2]
+                            cam_y = -self.sim.get_agent(0).get_state().position[0]
+                            rr.log(
+                                "camera/rgb",
+                                rr.Image(observations["rgb"]).compress(jpeg_quality=50),
+                            )
+                            rr.log(
+                                "camera/depth",
+                                rr.Image(
+                                    (observations["depth"] - observations["depth"].min())
+                                    / (
+                                        observations["depth"].max()
+                                        - observations["depth"].min()
+                                    )
                                 ),
-                                "obs_from_pose": observations,
-                            }
-                        )
-                    if self.log_rerun:
-                        cam_x = -self.sim.get_agent(0).get_state().position[2]
-                        cam_y = -self.sim.get_agent(0).get_state().position[0]
-                        rr.log(
-                            "camera/rgb",
-                            rr.Image(observations["rgb"]).compress(jpeg_quality=50),
-                        )
-                        rr.log(
-                            "camera/depth",
-                            rr.Image(
-                                (observations["depth"] - observations["depth"].min())
-                                / (
-                                    observations["depth"].max()
-                                    - observations["depth"].min()
-                                )
-                            ),
-                        )
-                        self.logger.log_pos(cam_x, cam_y)
-
-                    action, called_found = self.actor.act(observations)
-                    self.execute_action(action)
-
-                    ## logging goal seen
-                    object_centroids = [[-g['centroid'][2], -g['centroid'][0], g['centroid'][1]] for g in current_obj['goal_object']]
-                    object_visible = within_fov_cone(
-                        cone_origin=pose[:3],
-                        cone_angle=pose[3],
-                        cone_fov=np.deg2rad(self.hfov),
-                        cone_range=2.5,
-                        points=np.array(object_centroids),
-                    )
-                    if sequence_id not in is_object_in_frame:
-                        is_object_in_frame[sequence_id] = []
-                    if sequence_id not in all_object_detections:
-                        all_object_detections[sequence_id] = []
-                    is_object_in_frame[sequence_id].append(object_visible)
-                    if (
-                        self.actor.mapper.detections is not None
-                        and len(self.actor.mapper.detections) > 0
-                        and len(self.actor.mapper.detections["boxes"]) > 0
-                    ):
-                        if self.actor.mapper.chosen_detection is not None:
-                            pos = self.actor.mapper.chosen_detection
-                            pos_metric = self.actor.mapper.one_map.px_to_metric(
-                                pos[0], pos[1]
                             )
-                        else:
-                            pos = []
-                            pos_metric = []
-                        agent_pose_map = self.actor.mapper.one_map.metric_to_px(
-                            -observations["state"].position[2], -observations["state"].position[0]
+                            self.logger.log_pos(cam_x, cam_y)
+
+                        action, called_found = self.actor.act(observations)
+                        self.execute_action(action)
+
+                        ## logging goal seen
+                        object_centroids = [[-g['centroid'][2], -g['centroid'][0], g['centroid'][1]] for g in current_obj['goal_object']]
+                        object_visible = within_fov_cone(
+                            cone_origin=pose[:3],
+                            cone_angle=pose[3],
+                            cone_fov=np.deg2rad(self.hfov),
+                            cone_range=2.5,
+                            points=np.array(object_centroids),
                         )
-                        all_object_detections[sequence_id].append({
-                            "detections": json.dumps(self.actor.mapper.detections),
-                            "goal_pos_map": pos,
-                            "goal_pos": pos_metric,
-                            "agent_pose": pose,
-                            "agent_pose_map": agent_pose_map
-                        })
-
-                    if self.log_rerun:
-                        self.logger.log_map()
-                        pts = []
-                        viewpts = []
-                        for obj in current_obj["goal_object"]:
-                            pt = obj["centroid"]
-                            pt = (-pt[2], -pt[0])
-                            pts.append(self.actor.mapper.one_map.metric_to_px(*pt))
-                            for v in obj['navigable_points']:
-                                vt = (-float(v[2]), -float(v[0]))
-                                viewpts.append(self.actor.mapper.one_map.metric_to_px(*vt))
-                        pts = np.array(pts)
-                        rr.log(
-                            "map/ground_truth",
-                            rr.Points2D(pts, colors=[[150, 5, 200]], radii=[2]),
-                        )
-                        rr.log(
-                            "map/ground_truth_viewpoints",
-                            rr.Points2D(viewpts, colors=[[150, 5, 170]], radii=[0.5]),
-                        )
-                    if self.save_video:
-                        _pad = 3
-                        similarities = self.actor.mapper.get_map()
-                        sim_map_layers = []
-                        final_sim = None
-                        if len(similarities.shape) > 3 and similarities.shape[-1] > 1:
-                            similarities = similarities[0]
-                            num_layers = similarities.shape[-1]
-                            for i in range(num_layers):
-                                sim_map = similarities[:,:,i] # + 1.0) / 2.0
-                                sim_map_img = np.flip(monochannel_to_inferno_rgb(np.flip(sim_map,axis=-1).transpose((1, 0))),axis=-1)
-                                sim_map_layers.append(sim_map_img)
-                        else:
-                            similarities = (similarities + 1.0) / 2.0
-                            final_sim = np.flip(monochannel_to_inferno_rgb(np.flip(similarities[0],axis=-1).transpose((1, 0))),axis=-1)
-
-                        traversable_map = self.actor.mapper.one_map.navigable_map.astype(np.float32)
-                        pose_m = self.actor.mapper.one_map.metric_to_px(
-                            -observations["state"].position[2], -observations["state"].position[0]
-                        )
-                        traversable_map[pose_m[0]-_pad:pose_m[0]+_pad, pose_m[1]-_pad:pose_m[1]+_pad] = 0.5
-
-                        # show GT goals
-                        for _goal in current_obj["goal_object"]:
-                            bbox = _goal["aabb"]
-                            center = _goal["centroid"]
-                            center_m = self.actor.mapper.one_map.metric_to_px(
-                                        -center[2], -center[0]
-                                    )
-                            traversable_map[min(center_m[0], traversable_map.shape[0]-1), min(center_m[1], traversable_map.shape[1]-1)] = 0.7
-                            for p in _goal["navigable_points"]:
-                                pm = self.actor.mapper.one_map.metric_to_px(
-                                        -float(p[2]), -float(p[0])
-                                    )
-                                traversable_map[min(pm[0], traversable_map.shape[0]-1), min(pm[1], traversable_map.shape[1]-1)] = 0.7
-
-                        # mark selected goal
-                        goal_pos = self.actor.mapper.chosen_detection
-                        if goal_pos is not None:
-                            traversable_map[goal_pos[0]-_pad:goal_pos[0]+_pad, goal_pos[1]-_pad:goal_pos[1]+_pad] = 0.8
-                        else:
-                            # mark frontier goals
-                            pts = np.array([nav_goal.get_descr_point() for nav_goal in self.actor.mapper.nav_goals])
-                            if len(pts) > 0:
-                                pt = pts[0]
-                                traversable_map[pt[0]-_pad:pt[0]+_pad, pt[1]-_pad:pt[1]+_pad] = 0.8
-
-                        # mark path to the goal
-                        if self.actor.mapper.path is not None and len(self.actor.mapper.path) > 0:
-                            for pth in self.actor.mapper.path:
-                                try:
-                                    traversable_map[pth[0], pth[1]] = 0.3
-                                except:
-                                    pass
-
-                        traversable_map = np.flip(monochannel_to_inferno_rgb(np.flip(traversable_map,axis=-1).transpose((1, 0))),axis=-1)
-
-                        obstcl_map_layers = []
-                        if self.actor.mapper.one_map.layered:
-                            obstacles_layered = self.actor.mapper.one_map.obstacle_map_layered.cpu().numpy()
-                            if len(obstacles_layered.shape) > 2 and obstacles_layered.shape[-1] > 1:
-                                num_layers = obstacles_layered.shape[-1]
-                                for i in range(num_layers):
-                                    obstcl_map_img = np.flip(monochannel_to_inferno_rgb(np.flip(obstacles_layered[:,:,i],axis=-1).transpose((1, 0))),axis=-1)
-                                    obstcl_map_layers.append(obstcl_map_img)
-
-                        dist = self.get_closest_dist(
-                            self.sim.get_agent(0).get_state().position,
-                            current_obj["goal_object"],
-                        )
-                        text_to_append = f"steps={steps}, query={goal_query}, dist_to closest_goal={np.round(dist,2)}, object_detected={self.actor.mapper.object_detected}, running_exploit={running_exploit}, called_found={called_found}, object_in_frame={object_visible}"
-                        img_frame = add_sim_maps_to_image(
-                            observation=observations,
-                            maps={
-                                "sim_map": final_sim,
-                                "traversable_map": traversable_map,
-                                "object_detected": self.actor.mapper.object_detected,
-                                "predictions": self.actor.mapper.detections,
-                                "sim_map_layers": sim_map_layers,
-                                "obstcl_map_layers": obstcl_map_layers if self.actor.mapper.one_map.layered else None,
-                            },
-                            text_to_append=text_to_append,
-                        )
-                        rgb_frames.append(img_frame)
-
-                    if steps % 100 == 0:
-                        dist = self.get_closest_dist(
-                            self.sim.get_agent(0).get_state().position,
-                            current_obj["goal_object"],
-                        )
-                        print(
-                            f"Step {steps}, current query: {goal_query}, episode_id: {episode.episode_id}, distance to closest object: {dist}"
-                        )
-                    steps += 1
-
-                    if steps > self.max_explore_steps and not called_found:
-                        self.actor.set_exploit()
-                        running_exploit = True
-
-                    if called_found or steps >= self.max_steps:
-                        running = False
-                        result = Result.FAILURE_OOT
-                        # We will now compute the closest distance to the bounding box of the object
-                        if called_found:
-                            dist = self.get_closest_dist(
-                                self.sim.get_agent(0).get_state().position,
-                                current_obj["goal_object"],
-                            )
-                            if dist < self.max_dist:
-                                result = Result.NO_FAILURE
-                                print("Object found!")
-                            else:
+                        if sequence_id not in is_object_in_frame:
+                            is_object_in_frame[sequence_id] = []
+                        if sequence_id not in all_object_detections:
+                            all_object_detections[sequence_id] = []
+                        is_object_in_frame[sequence_id].append(object_visible)
+                        if (
+                            self.actor.mapper.detections is not None
+                            and len(self.actor.mapper.detections) > 0
+                            and len(self.actor.mapper.detections["boxes"]) > 0
+                        ):
+                            if self.actor.mapper.chosen_detection is not None:
                                 pos = self.actor.mapper.chosen_detection
                                 pos_metric = self.actor.mapper.one_map.px_to_metric(
                                     pos[0], pos[1]
                                 )
-                                dist_detect = self.get_closest_dist(
-                                    [-pos_metric[1], self.sim.get_agent(0).get_state().position[1], -pos_metric[0]],
+                            else:
+                                pos = []
+                                pos_metric = []
+                            agent_pose_map = self.actor.mapper.one_map.metric_to_px(
+                                -observations["state"].position[2], -observations["state"].position[0]
+                            )
+                            all_object_detections[sequence_id].append({
+                                "detections": json.dumps(self.actor.mapper.detections),
+                                "goal_pos_map": pos,
+                                "goal_pos": pos_metric,
+                                "agent_pose": pose,
+                                "agent_pose_map": agent_pose_map
+                            })
+
+                        if self.log_rerun:
+                            self.logger.log_map()
+                            pts = []
+                            viewpts = []
+                            for obj in current_obj["goal_object"]:
+                                pt = obj["centroid"]
+                                pt = (-pt[2], -pt[0])
+                                pts.append(self.actor.mapper.one_map.metric_to_px(*pt))
+                                for v in obj['navigable_points']:
+                                    vt = (-float(v[2]), -float(v[0]))
+                                    viewpts.append(self.actor.mapper.one_map.metric_to_px(*vt))
+                            pts = np.array(pts)
+                            rr.log(
+                                "map/ground_truth",
+                                rr.Points2D(pts, colors=[[150, 5, 200]], radii=[2]),
+                            )
+                            rr.log(
+                                "map/ground_truth_viewpoints",
+                                rr.Points2D(viewpts, colors=[[150, 5, 170]], radii=[0.5]),
+                            )
+                        if self.save_video:
+                            _pad = 5
+                            pose_m = self.actor.mapper.one_map.metric_to_px(
+                                -observations["state"].position[2], -observations["state"].position[0]
+                            )
+                            similarities = self.actor.mapper.get_map()
+                            sim_map_layers = []
+                            final_sim = None
+                            if len(similarities.shape) > 3 and similarities.shape[-1] > 1:
+                                similarities = similarities[0]
+                                num_layers = similarities.shape[-1]
+                                _padm = 250
+                                for i in range(1, num_layers):
+                                    sim_map = similarities[:,:,i]
+                                    sim_map[sim_map < 0] = 0.0
+                                    new_img = np.zeros_like(sim_map)
+                                    non_zero_ind = np.transpose(np.nonzero(sim_map))
+                                    if len(non_zero_ind) > 0:
+                                        # Get the bounding box of non-zero pixels
+                                        x, y, w, h = np.min(non_zero_ind[:,1]), np.min(non_zero_ind[:,0]), np.max(non_zero_ind[:,1]), np.max(non_zero_ind[:,0])
+                                        # Add some margin (optional)
+                                        margin = 10
+                                        x = max(0, x - margin)
+                                        y = max(0, y - margin)
+                                        w = min(sim_map.shape[1] - x, w + 2 * margin)
+                                        h = min(sim_map.shape[0] - y, h + 2 * margin)
+                                        cropped_image = sim_map[y:y+h, x:x+w]
+                                        mid = new_img.shape[0] // 2
+                                        start_h = mid - (sim_map.shape[0]//2)
+                                        start_w = mid - (sim_map.shape[1]//2)
+                                        new_img[start_h: start_h + sim_map.shape[0], start_w: start_w + sim_map.shape[1]] = sim_map
+                                    sim_map_img = np.flip(monochannel_to_inferno_rgb(np.flip(new_img,axis=-1).transpose((1, 0))),axis=-1)
+                                    x,y,z = np.where(sim_map_img==0)  # re-color background to white
+                                    sim_map_img[x,y] = [255,255,255]
+                                    # cv2.imwrite('test.jpg', sim_map_img)
+                                    sim_map_layers.append(sim_map_img)
+                            else:
+                                similarities = (similarities + 1.0) / 2.0
+                                final_sim = np.flip(monochannel_to_inferno_rgb(np.flip(similarities[0],axis=-1).transpose((1, 0))),axis=-1)
+
+                            traversable_map = self.actor.mapper.one_map.navigable_map.astype(np.float32)
+                            traversable_map[pose_m[0]-_pad:pose_m[0]+_pad, pose_m[1]-_pad:pose_m[1]+_pad] = 0.5
+
+                            # show GT goals
+                            # for _goal in current_obj["goal_object"]:
+                            #     bbox = _goal["aabb"]
+                            #     center = _goal["centroid"]
+                            #     center_m = self.actor.mapper.one_map.metric_to_px(
+                            #                 -center[2], -center[0]
+                            #             )
+                            #     traversable_map[min(center_m[0], traversable_map.shape[0]-1), min(center_m[1], traversable_map.shape[1]-1)] = 0.7
+                            #     for p in _goal["navigable_points"]:
+                            #         pm = self.actor.mapper.one_map.metric_to_px(
+                            #                 -float(p[2]), -float(p[0])
+                            #             )
+                            #         traversable_map[min(pm[0], traversable_map.shape[0]-1), min(pm[1], traversable_map.shape[1]-1)] = 0.7
+
+                            # mark selected goal
+                            # goal_pos = self.actor.mapper.chosen_detection
+                            # if goal_pos is not None:
+                            #     traversable_map[goal_pos[0]-_pad:goal_pos[0]+_pad, goal_pos[1]-_pad:goal_pos[1]+_pad] = 0.8
+                            # else:
+                            #     # mark frontier goals
+                            #     pts = np.array([nav_goal.get_descr_point() for nav_goal in self.actor.mapper.nav_goals])
+                            #     if len(pts) > 0:
+                            #         pt = pts[0]
+                            #         traversable_map[pt[0]-_pad:pt[0]+_pad, pt[1]-_pad:pt[1]+_pad] = 0.8
+
+                            # # mark path to the goal
+                            # if self.actor.mapper.path is not None and len(self.actor.mapper.path) > 0:
+                            #     for pth in self.actor.mapper.path:
+                            #         try:
+                            #             traversable_map[pth[0], pth[1]] = 0.3
+                            #         except:
+                            #             pass
+
+                            traversable_map = np.flip(traversable_map,axis=-1).transpose((1, 0))
+                            traversable_map = 1 - traversable_map
+                            non_zero_pixels = cv2.findNonZero(traversable_map)
+                            # Get the bounding box of non-zero pixels
+                            x, y, w, h = cv2.boundingRect(non_zero_pixels)
+                            # Add some margin (optional)
+                            margin = 10
+                            x = max(0, x - margin)
+                            y = max(0, y - margin)
+                            w = min(traversable_map.shape[1] - x, w + 2 * margin)
+                            h = min(traversable_map.shape[0] - y, h + 2 * margin)
+
+                            # Crop the image
+                            cropped_image = traversable_map[y:y+h, x:x+w]
+                            cropped_image = 1-cropped_image
+                            traversable_map = np.flip(monochannel_to_gray(cropped_image),axis=-1)
+                            x,y,z = np.where(traversable_map==127)  # re-color agent
+                            traversable_map[x,y] = [250,0,20]
+
+                            # obstcl_map_layers = []
+                            # if self.actor.mapper.one_map.layered:
+                            #     obstacles_layered = self.actor.mapper.one_map.obstacle_map_layered.cpu().numpy()
+                            #     if len(obstacles_layered.shape) > 2 and obstacles_layered.shape[-1] > 1:
+                            #         num_layers = obstacles_layered.shape[-1]
+                            #         for i in range(num_layers):
+                            #             obstcl_map_img = np.flip(monochannel_to_inferno_rgb(np.flip(obstacles_layered[:,:,i],axis=-1).transpose((1, 0))),axis=-1)
+                            #             obstcl_map_layers.append(obstcl_map_img)
+
+                            dist = self.get_closest_dist(
+                                self.sim.get_agent(0).get_state().position,
+                                current_obj["goal_object"],
+                            )
+                            text_to_append = f"Goal#{sequence_id+1} '{current_obj['language_instruction']}'\nStep count: {steps}. Distance to closest viewpoint:{np.round(dist,2)} m."
+                            is_success = False
+                            if called_found and dist < self.max_dist:
+                                is_success = True
+                            img_frame = add_sim_maps_to_image_paper(
+                                observation=observations,
+                                maps={
+                                    "sim_map": final_sim,
+                                    "traversable_map": traversable_map,
+                                    "object_detected": self.actor.mapper.object_detected,
+                                    "predictions": self.actor.mapper.detections,
+                                    "sim_map_layers": sim_map_layers,
+                                    "called_found": called_found,
+                                    "is_success": is_success,
+                                    "ran_out_of_time": steps > self.max_steps,
+                                    # "obstcl_map_layers": obstcl_map_layers if self.actor.mapper.one_map.layered else None,
+                                },
+                                text_to_append=text_to_append,
+                            )
+                            # if steps > self.max_explore_steps and not called_found:
+                            #     rect_color = (0,0,255)
+                            #     start_y, end_y = 0, img_frame.shape[0]
+                            #     start_x, end_x = 0, img_frame.shape[1]
+                            #     img_frame = cv2.rectangle(img_frame, (start_x, start_y), (end_x, end_y), rect_color, thickness=10)
+                            #     font_size = 1.0
+                            #     font_thickness = 2
+                            #     font = cv2.FONT_HERSHEY_SIMPLEX
+                            #     cv2.putText(
+                            #         img_frame,
+                            #         "exploit-only mode activated",
+                            #         (310, 900),
+                            #         font,
+                            #         font_size,
+                            #         (0, 0, 0),
+                            #         font_thickness,
+                            #         lineType=cv2.LINE_AA,
+                            #     )
+
+                            rgb_frames.append(img_frame)
+                            if called_found or steps >= self.max_steps:
+                                font_size = 2.0
+                                font_thickness = 2
+                                font = cv2.FONT_HERSHEY_SIMPLEX
+                                font_color = (255,0,0)
+                                if is_success:
+                                    font_color = (0,255,0)
+                                cv2.putText(
+                                    img_frame,
+                                    "Success" if is_success else "Failure",
+                                    (900, 700),
+                                    font,
+                                    font_size,
+                                    font_color,
+                                    font_thickness,
+                                    lineType=cv2.LINE_AA,
+                                )
+                                for _ in range(10):
+                                    rgb_frames.append(img_frame)
+
+                        if steps % 100 == 0:
+                            dist = self.get_closest_dist(
+                                self.sim.get_agent(0).get_state().position,
+                                current_obj["goal_object"],
+                            )
+                            if dist == float("inf"):
+                                with open(
+                                    f"{self.results_path}/exceptions/{episode.episode_id}_dist_inf.txt", "w"
+                                ) as f:
+                                    f.write(f"Step {steps}, current query: {goal_query}, episode_id: {episode.episode_id}, distance to closest viewpoint: {dist}")
+                                break
+                            print(
+                                f"Step {steps}, current query: {goal_query}, episode_id: {episode.episode_id}, distance to closest viewpoint: {dist}"
+                            )
+                        steps += 1
+
+                        if steps % self.max_explore_steps == 0 and not called_found:
+                            # check every max_explore_steps number of steps
+                            check_found, _ = self.actor.check_if_goal_found()
+                            if check_found:
+                                self.actor.set_exploit()
+                                running_exploit = True
+
+                        if called_found or steps >= self.max_steps:
+                            running = False
+                            result = Result.FAILURE_OOT
+                            # reset the relation graph
+                            self.actor.mapper.one_map.rel_graph.reset_graph()
+                            self.actor.mapper.one_map.reset_checked_image_map()
+                            # We will now compute the closest distance to the bounding box of the object
+                            if called_found:
+                                dist = self.get_closest_dist(
+                                    self.sim.get_agent(0).get_state().position,
                                     current_obj["goal_object"],
                                 )
-                                if dist_detect < self.max_dist:
-                                    result = Result.FAILURE_NOT_REACHED
-                                elif running_exploit:
-                                    result = Result.FAILURE_MISDETECT_ON_MAP
-                                elif self.actor.mapper.use_detector:
-                                    result = Result.FAILURE_MISDETECT
-                                not_failed = False
-                                print(
-                                    f"Object not found! Dist {dist}, detect dist: {dist_detect}."
-                                )
-                        else:
-                            not_failed = False
-                            if (
-                                result == Result.FAILURE_OOT
-                                and np.linalg.norm(poses[-1][:2] - poses[-10][:2])
-                                < 0.05
-                            ):
-                                result = Result.FAILURE_STUCK
-                            num_frontiers = len(self.actor.mapper.nav_goals)
-                            if (
-                                result == Result.FAILURE_STUCK
-                                or result == Result.FAILURE_OOT
-                            ) and num_frontiers == 0:
-                                result = Result.FAILURE_ALL_EXPLORED
-                        results[-1].add_sequence(np.array(poses), result, current_obj)
-
-                        if self.save_maps:
-                            final_sim = (self.actor.mapper.get_map() + 1.0) / 2.0
-                            confs = (
-                                (self.actor.mapper.one_map.confidence_map > 0)
-                                .cpu()
-                                .squeeze()
-                                .numpy()
-                            )
-                            nav_map = self.actor.mapper.one_map.navigable_map.astype(bool)
-                            feature_map = (
-                                self.actor.mapper.one_map.feature_map.cpu()
-                                .numpy()
-                                .astype(float)
-                            )
-                            final_sim = final_sim[0]
-                            final_sim = monochannel_to_inferno_rgb(final_sim)
-
-                            final_sim[~confs, :] = [0, 0, 0]
-                            # final_sim[(~nav_map) & confs, :] = [0, 0, 0]
-                            min_x = np.min(np.where(confs)[0])
-                            max_x = np.max(np.where(confs)[0])
-                            min_y = np.min(np.where(confs)[1])
-                            max_y = np.max(np.where(confs)[1])
-                            final_sim = final_sim[min_x:max_x, min_y:max_y]
-                            final_sim = final_sim.transpose((1, 0, 2))
-                            final_sim = np.flip(
-                                final_sim, axis=0
-                            )  # get min and max x and y of confs
-
-                            gt_goal_objects = []
-                            for _goal in current_obj["goal_object"]:
-                                bbox = _goal["aabb"]
-                                center = _goal["centroid"]
-                                nav_points_map = [
-                                    self.actor.mapper.one_map.metric_to_px(
-                                        -float(p[2]), -float(p[0])
+                                if dist < self.max_dist:
+                                    result = Result.NO_FAILURE
+                                    print("Object found!")
+                                elif self.actor.mapper.chosen_detection is not None:
+                                    pos = self.actor.mapper.chosen_detection
+                                    pos_metric = self.actor.mapper.one_map.px_to_metric(
+                                        pos[0], pos[1]
                                     )
-                                    for p in _goal["navigable_points"]
-                                ]
-                                gt_goal_objects.append(
-                                    {
-                                        "object_category": current_obj["object_category"],
-                                        "instruction": current_obj["language_instruction"],
-                                        "object_extras": current_obj["extras"],
-                                        "center": center,
-                                        "aabb": bbox,
-                                        "center_map": self.actor.mapper.one_map.metric_to_px(
-                                            -center[2], -center[0]
-                                        ),
-                                        "nav_points_map": nav_points_map,
-                                    }
+                                    dist_detect = self.get_closest_dist(
+                                        [-pos_metric[1], self.sim.get_agent(0).get_state().position[1], -pos_metric[0]],
+                                        current_obj["goal_object"],
+                                    )
+                                    if dist_detect < self.max_dist:
+                                        result = Result.FAILURE_NOT_REACHED
+                                    elif running_exploit:
+                                        result = Result.FAILURE_MISDETECT_ON_MAP
+                                    elif self.actor.mapper.use_detector:
+                                        result = Result.FAILURE_MISDETECT
+                                    not_failed = False
+                                    print(
+                                        f"Object not found! Dist {dist}, detect dist: {dist_detect}."
+                                    )
+                            else:
+                                not_failed = False
+                                if (
+                                    result == Result.FAILURE_OOT
+                                    and np.linalg.norm(poses[-1][:2] - poses[-10][:2])
+                                    < 0.05
+                                ):
+                                    result = Result.FAILURE_STUCK
+                                num_frontiers = len(self.actor.mapper.nav_goals)
+                                if (
+                                    result == Result.FAILURE_STUCK
+                                    or result == Result.FAILURE_OOT
+                                ) and num_frontiers == 0:
+                                    result = Result.FAILURE_ALL_EXPLORED
+                            results[-1].add_sequence(np.array(poses), result, current_obj)
+
+                            if self.save_maps:
+                                # final_sim = (self.actor.mapper.get_map() + 1.0) / 2.0
+                                confs = (
+                                    (self.actor.mapper.one_map.confidence_map > 0)
+                                    .cpu()
+                                    .squeeze()
+                                    .numpy()
                                 )
-                            np.savez_compressed(
-                                f"{self.results_path}/saved_maps/{episode.episode_id}_{sequence_id}.npz",
-                                nav_map=nav_map,
-                                feature_map=feature_map,
-                                confidence_map=confs,
-                                query=goal_query,
-                                final_sim_img=final_sim,
-                                pose_observations=map_poses_and_obs,
-                                gt_goal_objects=gt_goal_objects,
-                            )
+                                # nav_map = self.actor.mapper.one_map.navigable_map.astype(bool)
+                                feature_map = (
+                                    self.actor.mapper.one_map.feature_map.cpu()
+                                    .numpy()
+                                    .astype(float)
+                                )
+                                # final_sim = final_sim[0]
+                                # final_sim = monochannel_to_inferno_rgb(final_sim)
 
-                            cv2.imwrite(
-                                f"{self.results_path}/similarities/final_sim_{episode.episode_id}_{sequence_id}.png",
-                                final_sim,
-                            )
-                            # Create the plot
-                            plt.figure(figsize=(10, 10))
-                            poses_ = np.array(
-                                [
-                                    self.actor.mapper.one_map.metric_to_px(*pos[:2])
-                                    for pos in poses
-                                ]
-                            )
-                            poses_[:, 0] -= min_x
-                            poses_[:, 1] -= min_y
-                            plt.imshow(
-                                final_sim[:, :, ::-1],
-                                interpolation="nearest",
-                                aspect="equal",
-                                extent=(0, final_sim.shape[1], 0, final_sim.shape[0]),
-                            )
+                                # final_sim[~confs, :] = [0, 0, 0]
+                                # # final_sim[(~nav_map) & confs, :] = [0, 0, 0]
+                                # min_x = np.min(np.where(confs)[0])
+                                # max_x = np.max(np.where(confs)[0])
+                                # min_y = np.min(np.where(confs)[1])
+                                # max_y = np.max(np.where(confs)[1])
+                                # final_sim = final_sim[min_x:max_x, min_y:max_y]
+                                # final_sim = final_sim.transpose((1, 0, 2))
+                                # final_sim = np.flip(
+                                #     final_sim, axis=0
+                                # )  # get min and max x and y of confs
 
-                            plt.plot(
-                                poses_[:, 0], poses_[:, 1], "b-o"
-                            )  # 'b-o' means blue line with circle markers
+                                # gt_goal_objects = []
+                                # for _goal in current_obj["goal_object"]:
+                                #     bbox = _goal["aabb"]
+                                #     center = _goal["centroid"]
+                                #     nav_points_map = [
+                                #         self.actor.mapper.one_map.metric_to_px(
+                                #             -float(p[2]), -float(p[0])
+                                #         )
+                                #         for p in _goal["navigable_points"]
+                                #     ]
+                                #     gt_goal_objects.append(
+                                #         {
+                                #             "object_category": current_obj["object_category"],
+                                #             "instruction": current_obj["language_instruction"],
+                                #             "object_extras": current_obj["extras"],
+                                #             "center": center,
+                                #             "aabb": bbox,
+                                #             "center_map": self.actor.mapper.one_map.metric_to_px(
+                                #                 -center[2], -center[0]
+                                #             ),
+                                #             "nav_points_map": nav_points_map,
+                                #         }
+                                #     )
+                                np.savez_compressed(
+                                    f"{self.results_path}/saved_maps/{episode.episode_id}_{sequence_id}.npz",
+                                    # nav_map=nav_map,
+                                    feature_map=feature_map,
+                                    confidence_map=confs,
+                                    query=goal_query,
+                                    # final_sim_img=final_sim,
+                                    pose_observations=map_poses_and_obs,
+                                    # gt_goal_objects=gt_goal_objects,
+                                )
 
-                            # Set equal aspect ratio to ensure accurate positions
-                            plt.axis("equal")
+                                # cv2.imwrite(
+                                #     f"{self.results_path}/similarities/final_sim_{episode.episode_id}_{sequence_id}.png",
+                                #     final_sim,
+                                # )
+                                # # Create the plot
+                                # plt.figure(figsize=(10, 10))
+                                # poses_ = np.array(
+                                #     [
+                                #         self.actor.mapper.one_map.metric_to_px(*pos[:2])
+                                #         for pos in poses
+                                #     ]
+                                # )
+                                # poses_[:, 0] -= min_x
+                                # poses_[:, 1] -= min_y
+                                # plt.imshow(
+                                #     final_sim[:, :, ::-1],
+                                #     interpolation="nearest",
+                                #     aspect="equal",
+                                #     extent=(0, final_sim.shape[1], 0, final_sim.shape[0]),
+                                # )
 
-                            # Add labels and title
-                            plt.xlabel("X position")
-                            plt.ylabel("Y position")
-                            plt.title("Path of Poses")
+                                # plt.plot(
+                                #     poses_[:, 0], poses_[:, 1], "b-o"
+                                # )  # 'b-o' means blue line with circle markers
 
-                            # Add grid for better readability
-                            plt.grid(True)
+                                # # Set equal aspect ratio to ensure accurate positions
+                                # plt.axis("equal")
 
-                            # Save the plot as SVG
-                            plt.savefig(
-                                f"{self.results_path}/similarities/path_{episode.episode_id}_{sequence_id}.svg",
-                                format="svg",
-                                dpi=300,
-                                bbox_inches="tight",
-                            )
+                                # # Add labels and title
+                                # plt.xlabel("X position")
+                                # plt.ylabel("Y position")
+                                # plt.title("Path of Poses")
 
-                            # Display the plot (optional, comment out if not needed)
-                            # plt.show()
+                                # # Add grid for better readability
+                                # plt.grid(True)
 
-                        sequence_id += 1
-                        if sequence_id < len(episode.goals):
-                            current_obj = episode.goals[sequence_id]
-                            if self.config.goal_query_type == "coarse":
-                                goal_query = "a " + " ".join(current_obj["object_category"].split('_'))
-                            elif self.config.goal_query_type == "fine":
-                                goal_query = "a " + " ".join(current_obj["extras"]["object_category"].split("_"))
-                            else:
-                                if self.config.goal_query_processing == "extract" or self.config.goal_query_processing == "extract_and_split_support":
-                                    goal_query = current_obj['language_instruction'].split('Find ')[-1].split('Go to ')[-1].split('.')[0]
-                                elif self.config.goal_query_processing == "extract_no_support":
-                                    goal_query = current_obj['language_instruction'].split('Find ')[-1].split('Go to ')[-1].split('.')[0].split(' on the ')[0]
+                                # # Save the plot as SVG
+                                # plt.savefig(
+                                #     f"{self.results_path}/similarities/path_{episode.episode_id}_{sequence_id}.svg",
+                                #     format="svg",
+                                #     dpi=300,
+                                #     bbox_inches="tight",
+                                # )
+
+                                # # Display the plot (optional, comment out if not needed)
+                                # # plt.show()
+
+                            sequence_id += 1
+                            if sequence_id < len(episode.goals):
+                                current_obj = episode.goals[sequence_id]
+                                if self.config.goal_query_type == "coarse":
+                                    goal_query = "a " + " ".join(current_obj["object_category"].split('_'))
+                                elif self.config.goal_query_type == "fine":
+                                    goal_query = "a " + " ".join(current_obj["extras"]["object_category"].split("_"))
                                 else:
+                                    if self.config.goal_query_processing == "extract" or self.config.goal_query_processing == "extract_and_split_support":
+                                        goal_query = current_obj['language_instruction'].split('Find ')[-1].split('Go to ')[-1].split('.')[0]
+                                    elif self.config.goal_query_processing == "extract_no_support":
+                                        goal_query = current_obj['language_instruction'].split('Find ')[-1].split('Go to ')[-1].split('.')[0].split(' on the ')[0]
+                                    else:
+                                        goal_query = current_obj['language_instruction']
+
+                                if self.config.goal_query_processing == "extract_graph":
+                                    full_query = goal_query
+                                    text_graph = extract_graph_from_text(goal_query)
+                                    text_graph_queries = text_graph["nodes"]
+                                    if len(text_graph_queries) == 0:
+                                        text_graph_queries = full_query.split('Find ')[-1].split('Go to ')[-1].split('.')[0]
+                                    elif len(text_graph["edges"]) > 0:
+                                        text_graph_queries.extend([e["relation"] for e in text_graph["edges"]])
+                                    self.actor.set_queries(text_graph_queries, full_query)
+                                elif self.config.goal_query_processing == "mix":
                                     goal_query = current_obj['language_instruction']
+                                    full_query = goal_query
+                                    if "on " in goal_query:
+                                        goal_query = goal_query.split(' on ')[::-1]
+                                        self.actor.set_queries(goal_query, full_query)
+                                    else:
+                                        self.actor.set_query(goal_query)
+                                elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "on " in goal_query:
+                                    full_query = goal_query
+                                    goal_query = goal_query.split(' on ')[::-1]
+                                    self.actor.set_queries(goal_query, full_query)
+                                else:
+                                    self.actor.set_query(goal_query)
 
-                            if self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "on " in goal_query:
-                                full_query = goal_query
-                                goal_query = goal_query.split(' on ')[::-1]
-                                self.actor.set_queries(goal_query, full_query)
-                            else:
-                                self.actor.set_query(goal_query)
-
-                    # except Exception as e:
-                    #     print(str(e))
-                    #     not_failed = False
-                    #     running = False
-                    #     result = Result.FAILURE_EXCEPTION
-                    #     results[-1].add_sequence(np.array(poses), result, current_obj)
-                    #     with open(
-                    #         f"{self.results_path}/exceptions/{episode.episode_id}.txt", "w"
-                    #     ) as f:
-                    #         f.write(str(e))
-                    #     break
+                    except Exception as e:
+                        print(str(e))
+                        not_failed = False
+                        running = False
+                        result = Result.FAILURE_EXCEPTION
+                        results[-1].add_sequence(np.array(poses), result, current_obj)
+                        with open(
+                            f"{self.results_path}/exceptions/{episode.episode_id}.txt", "w"
+                        ) as f:
+                            f.write(str(e))
+                        break
 
             for seq_id, seq in enumerate(results[n_ep].sequence_poses):
                 np.savetxt(
@@ -1420,22 +1573,22 @@ class HabitatMultiEvaluator:
                     delimiter=",",
                 )
                 # write goal object visible in frame
-                if len(is_object_in_frame) > 0:
-                    with open(
-                        f"{self.results_path}/extras/goal_visible_{episode.episode_id}_{seq_id}.txt", "w"
-                    ) as f:
-                        f.write(
-                            ",".join(
-                                str(_vis)
-                                for _vis in is_object_in_frame[seq_id])
-                            )
+                # if len(is_object_in_frame) > 0:
+                #     with open(
+                #         f"{self.results_path}/extras/goal_visible_{episode.episode_id}_{seq_id}.txt", "w"
+                #     ) as f:
+                #         f.write(
+                #             ",".join(
+                #                 str(_vis)
+                #                 for _vis in is_object_in_frame[seq_id])
+                #             )
                     
                 # write object detection details
-                if len(all_object_detections) > 0:
-                    np.save(
-                        f"{self.results_path}/extras/detections_{episode.episode_id}_{seq_id}",
-                        all_object_detections[seq_id],
-                    )
+                # if len(all_object_detections) > 0:
+                #     np.save(
+                #         f"{self.results_path}/extras/detections_{episode.episode_id}_{seq_id}",
+                #         all_object_detections[seq_id],
+                #     )
 
             # save final sim to image file
             if self.save_video:
@@ -1449,6 +1602,296 @@ class HabitatMultiEvaluator:
             #     print(f"{obj}: {success_per_obj[obj] / obj_count[obj]}")
             # print(
             #     f"Result distribution: successes: {results.count(Result.NO_FAILURE)}, misdetects: {results.count(Result.FAILURE_MISDETECT)}, OOT: {results.count(Result.FAILURE_OOT)}, stuck: {results.count(Result.FAILURE_STUCK)}, not reached: {results.count(Result.FAILURE_NOT_REACHED)}, all explored: {results.count(Result.FAILURE_ALL_EXPLORED)}")
+            # Write result to file
+            with open(
+                f"{self.results_path}/state/state_{episode.episode_id}.txt", "w"
+            ) as f:
+                f.write(
+                    ",".join(
+                        str(results[n_ep].sequence_results[i].value)
+                        for i in range(len(results[n_ep].sequence_results))
+                    )
+                )
+            pbar.update()
+            # Free up memory to avoid OOM
+            torch.cuda.empty_cache()
+        pbar.close()
+
+    def validate(self):
+        from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
+        from habitat.sims.habitat_simulator.actions import HabitatSimActions
+
+        n_eps = 0
+        results = []
+        self.actions = [
+            HabitatSimActions.move_forward,
+            HabitatSimActions.turn_left,
+            HabitatSimActions.turn_right,
+        ]
+        pbar = tqdm.tqdm(total=len(self.episodes))
+        for n_ep, episode in enumerate(self.episodes):
+            poses = []
+            map_poses_and_obs = []
+            metric = Metrics(episode.episode_id)
+            results.append(metric)
+            if len(self.include_ids) > 0 and episode.episode_id not in self.include_ids:
+                pbar.update()
+                continue
+            if episode.episode_id in self.exclude_ids:
+                pbar.update()
+                continue
+            # if '105515379_173104395' in episode.scene_id or '105515184_173104128' in episode.scene_id or '104348028_171512877' in episode.scene_id or '103997895_171031182' in episode.scene_id or '103997586_171030669' in episode.scene_id or '102816036' in episode.scene_id or '102344529' in episode.scene_id or '102815835' in episode.scene_id or '102817140' in episode.scene_id or '104348010_171512832' in episode.scene_id:
+            #     continue
+            n_eps += 1
+            if self.sim is None or not self.sim.curr_scene_name in episode.scene_id:
+                self.load_scene(episode.scene_id)
+
+            self.sim.initialize_agent(
+                0,
+                habitat_sim.AgentState(episode.start_position, episode.start_rotation),
+            )
+            self.actor.reset()
+            self.follower = ShortestPathFollower(
+            self.sim, goal_radius=0.25, return_one_hot=False,
+                stop_on_error=True # False for debugging
+            )
+
+            sequence_id = 0
+            current_obj = episode.goals[sequence_id]
+            if self.config.goal_query_type == "coarse":
+                goal_query = "a " + " ".join(current_obj["object_category"].split('_'))
+            elif self.config.goal_query_type == "fine":
+                goal_query = "a " + " ".join(current_obj["extras"]["object_category"].split("_"))
+            else:
+                if self.config.goal_query_processing == "extract" or self.config.goal_query_processing == "extract_and_split_support":
+                    goal_query = current_obj['language_instruction'].split('Find ')[-1].split('Go to ')[-1].split('.')[0]
+                elif self.config.goal_query_processing == "extract_no_support":
+                    goal_query = current_obj['language_instruction'].split('Find ')[-1].split('Go to ')[-1].split('.')[0].split(' on the ')[0]
+                else:
+                    goal_query = current_obj['language_instruction']
+
+            if self.config.goal_query_processing == "extract_graph":
+                full_query = goal_query
+                text_graph = extract_graph_from_text(goal_query)
+                text_graph_queries = text_graph["nodes"]
+                text_graph_queries.extend([e["relation"] for e in text_graph["edges"]])
+                self.actor.set_queries(text_graph_queries, full_query)
+            elif self.config.goal_query_processing == "mix":
+                goal_query = current_obj['language_instruction']
+                full_query = goal_query
+                if "on " in goal_query:
+                    goal_query = goal_query.split(' on ')[::-1]
+                    self.actor.set_queries(goal_query, full_query)
+                else:
+                    self.actor.set_query(goal_query)
+            elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and " on " in goal_query:
+                full_query = goal_query
+                goal_query = goal_query.split(' on ')[::-1]
+                self.actor.set_queries(goal_query, full_query)
+            elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "above " in goal_query:
+                full_query = goal_query
+                goal_query = goal_query.split(' above ')[::-1]
+                self.actor.set_queries(goal_query, full_query)
+            elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "below " in goal_query:
+                full_query = goal_query
+                goal_query = goal_query.split(' below ')
+                self.actor.set_queries(goal_query, full_query)
+            # elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "next to " in goal_query:
+            #     full_query = goal_query
+            #     goal_query = goal_query.split(' next to ')
+            #     # form kernel
+            #     goal_query_mod = [goal_query[1], goal_query[1], goal_query[1],
+            #                       goal_query[1], goal_query[0], goal_query[1],
+            #                       goal_query[1], goal_query[1], goal_query[1]]
+            #     self.actor.set_queries(goal_query_mod, full_query)
+            else:
+                self.actor.set_query(goal_query)
+            
+            rgb_frames = []
+            is_object_in_frame = {}
+            all_object_detections = {}
+            while sequence_id < len(episode.goals):
+                steps = 0
+                not_failed = True
+                running = True
+                running_exploit = False
+                map_poses_and_obs = []
+                while steps < self.max_steps and running:
+                    try:
+                        observations = self.sim.get_sensor_observations()
+                        # observations['depth'] = fill_depth_holes(observations['depth'])
+                        observations["state"] = self.sim.get_agent(0).get_state()
+                        pose = np.zeros((4,))
+                        pose[0] = -observations["state"].position[2]
+                        pose[1] = -observations["state"].position[0]
+                        pose[2] = observations["state"].position[1]
+                        # yaw
+                        orientation = observations["state"].rotation
+                        q0 = orientation.x
+                        q1 = orientation.y
+                        q2 = orientation.z
+                        q3 = orientation.w
+                        r = R.from_quat([q0, q1, q2, q3])
+                        # r to euler
+                        yaw, _, _1 = r.as_euler("yxz")
+                        pose[3] = yaw
+
+                        poses.append(pose)
+                        if self.save_maps:
+                            map_poses_and_obs.append(
+                                {
+                                    "pose_xyzyaw": pose,
+                                    "pose_map": self.actor.mapper.one_map.metric_to_px(
+                                        pose[0], pose[1]
+                                    ),
+                                    "obs_from_pose": observations,
+                                }
+                            )
+                        if self.log_rerun:
+                            rr.log("logs", rr.TextLog(f"\"{current_obj['language_instruction']}\""))
+                            cam_x = -self.sim.get_agent(0).get_state().position[2]
+                            cam_y = -self.sim.get_agent(0).get_state().position[0]
+                            rr.log(
+                                "camera/rgb",
+                                rr.Image(observations["rgb"]).compress(jpeg_quality=50),
+                            )
+                            rr.log(
+                                "camera/depth",
+                                rr.Image(
+                                    (observations["depth"] - observations["depth"].min())
+                                    / (
+                                        observations["depth"].max()
+                                        - observations["depth"].min()
+                                    )
+                                ),
+                            )
+                            self.logger.log_pos(cam_x, cam_y)
+
+                        action, called_found = self.actor.act(observations)
+                        self.execute_action(action)
+
+                        if steps % 100 == 0:
+                            dist = self.get_closest_dist(
+                                self.sim.get_agent(0).get_state().position,
+                                current_obj["goal_object"],
+                            )
+                            print(
+                                f"Step {steps}, current query: {goal_query}, episode_id: {episode.episode_id}, distance to closest viewpoint: {dist}"
+                            )
+                        steps += 1
+
+                        if called_found or steps >= self.max_steps:
+                            running = False
+                            result = Result.FAILURE_OOT
+                            # reset the relation graph
+                            self.actor.mapper.one_map.rel_graph.reset_graph()
+                            self.actor.mapper.one_map.reset_checked_image_map()
+                            # We will now compute the closest distance to the bounding box of the object
+                            if called_found:
+                                dist = self.get_closest_dist(
+                                    self.sim.get_agent(0).get_state().position,
+                                    current_obj["goal_object"],
+                                )
+                                if dist < self.max_dist:
+                                    result = Result.NO_FAILURE
+                                    print("Object found!")
+                                else:
+                                    pos = self.actor.mapper.chosen_detection
+                                    pos_metric = self.actor.mapper.one_map.px_to_metric(
+                                        pos[0], pos[1]
+                                    )
+                                    dist_detect = self.get_closest_dist(
+                                        [-pos_metric[1], self.sim.get_agent(0).get_state().position[1], -pos_metric[0]],
+                                        current_obj["goal_object"],
+                                    )
+                                    if dist_detect < self.max_dist:
+                                        result = Result.FAILURE_NOT_REACHED
+                                    elif running_exploit:
+                                        result = Result.FAILURE_MISDETECT_ON_MAP
+                                    elif self.actor.mapper.use_detector:
+                                        result = Result.FAILURE_MISDETECT
+                                    not_failed = False
+                                    print(
+                                        f"Object not found! Dist {dist}, detect dist: {dist_detect}."
+                                    )
+                            else:
+                                not_failed = False
+                                if (
+                                    result == Result.FAILURE_OOT
+                                    and np.linalg.norm(poses[-1][:2] - poses[-10][:2])
+                                    < 0.05
+                                ):
+                                    result = Result.FAILURE_STUCK
+                                num_frontiers = len(self.actor.mapper.nav_goals)
+                                if (
+                                    result == Result.FAILURE_STUCK
+                                    or result == Result.FAILURE_OOT
+                                ) and num_frontiers == 0:
+                                    result = Result.FAILURE_ALL_EXPLORED
+                            results[-1].add_sequence(np.array(poses), result, current_obj)
+
+                            sequence_id += 1
+                            if sequence_id < len(episode.goals):
+                                current_obj = episode.goals[sequence_id]
+                                if self.config.goal_query_type == "coarse":
+                                    goal_query = "a " + " ".join(current_obj["object_category"].split('_'))
+                                elif self.config.goal_query_type == "fine":
+                                    goal_query = "a " + " ".join(current_obj["extras"]["object_category"].split("_"))
+                                else:
+                                    if self.config.goal_query_processing == "extract" or self.config.goal_query_processing == "extract_and_split_support":
+                                        goal_query = current_obj['language_instruction'].split('Find ')[-1].split('Go to ')[-1].split('.')[0]
+                                    elif self.config.goal_query_processing == "extract_no_support":
+                                        goal_query = current_obj['language_instruction'].split('Find ')[-1].split('Go to ')[-1].split('.')[0].split(' on the ')[0]
+                                    else:
+                                        goal_query = current_obj['language_instruction']
+
+                                if self.config.goal_query_processing == "extract_graph":
+                                    full_query = goal_query
+                                    text_graph = extract_graph_from_text(goal_query)
+                                    text_graph_queries = text_graph["nodes"]
+                                    text_graph_queries.extend([e["relation"] for e in text_graph["edges"]])
+                                    self.actor.set_queries(text_graph_queries, full_query)
+                                elif self.config.goal_query_processing == "mix":
+                                    goal_query = current_obj['language_instruction']
+                                    full_query = goal_query
+                                    if "on " in goal_query:
+                                        goal_query = goal_query.split(' on ')[::-1]
+                                        self.actor.set_queries(goal_query, full_query)
+                                    else:
+                                        self.actor.set_query(goal_query)
+                                elif self.config.goal_query_type == "detailed" and self.config.goal_query_processing == "extract_and_split_support" and "on " in goal_query:
+                                    full_query = goal_query
+                                    goal_query = goal_query.split(' on ')[::-1]
+                                    self.actor.set_queries(goal_query, full_query)
+                                else:
+                                    self.actor.set_query(goal_query)
+
+                    except Exception as e:
+                        print(str(e))
+                        not_failed = False
+                        running = False
+                        result = Result.FAILURE_EXCEPTION
+                        results[-1].add_sequence(np.array(poses), result, current_obj)
+                        with open(
+                            f"{self.results_path}/exceptions/{episode.episode_id}.txt", "w"
+                        ) as f:
+                            f.write(str(e))
+                        break
+
+            for seq_id, seq in enumerate(results[n_ep].sequence_poses):
+                np.savetxt(
+                    f"{self.results_path}/trajectories/poses_{episode.episode_id}_{seq_id}.csv",
+                    seq,
+                    delimiter=",",
+                )
+            # save final sim to image file
+            if self.save_video:
+                generate_video(video_dir=f"{self.results_path}/videos", video_name=f"{episode.episode_id}__{result.name}", images=rgb_frames)
+                rgb_frames = []
+
+            print(
+                f"Overall progress: {sum([m.get_progress(self.num_seq) for m in results]) / (n_eps)}, per object: "
+            )
             # Write result to file
             with open(
                 f"{self.results_path}/state/state_{episode.episode_id}.txt", "w"
