@@ -14,7 +14,7 @@ EvalConf:
   use_pointnav: False
   square_im: True
   goal_query_type: "detailed" # "coarse", "fine", "detailed"
-  goal_query_processing: "extract_and_split_support" #"extract_and_split_support" #"extract"
+  goal_query_processing: "extract" #"extract_and_split_support" #"extract"
 
 config: [
   ../mon/controller_habitat.yaml, # Default Habitat Controller

@@ -1,10 +1,10 @@
 EvalConf:
   multi_object: True
   max_steps: 500
-  max_explore_steps: 50
+  max_explore_steps: 100
   max_dist: 1.5
   is_gibson: False
-  object_nav_path: "datasets/langmon/eval/langnav/langnav/spatial/3on_100/test"
+  object_nav_path: "datasets/langmon/eval/langnav/langnav/test"
   num_seq: 3
   scene_path: "datasets/scene_datasets/fphab/"
   results_path: "results_mlfm_relation_graph_spatial/"
@@ -27,6 +27,8 @@ MappingConf:
   z_bins_lower: -1.0
   z_bins_upper: 1.0
   z_bins_step: 0.8
+  store_raw_images: False
+  use_gpt: True
 
 PlanningConf:
   fuse_similarity: "object_relation" #"layerwisemax"
