@@ -76,11 +76,11 @@ Place inside ``datasets/langnav''. Please refer to the HF [documentation](https:
 ### 1. Run evaluation
 You can run the evaluation on the test split with:
 ```
-python eval_mlfm.py --config config/lnav/mlfm_conf.yaml
+python eval_mlsfm.py --config config/lnav/mlfm_conf.yaml
 ```
 The evaluation run will save out the results in the `results/` directory. You can read the results with:
 ```
-python read_results_mlfm.py --config config/lnav/mlfm_conf.yaml
+python read_results_mlsfm.py --config config/lnav/mlfm_conf.yaml
 ```
 #### Running experiments reported in the paper
 You can find all the yaml files under ``config/lnav/paper'' for running the experiments reported in the paper.
