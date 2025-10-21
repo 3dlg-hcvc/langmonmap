@@ -7,11 +7,11 @@ import time
 from mapping import (OneMap, detect_frontiers, get_frontier_midpoint,
                      cluster_high_similarity_regions, find_local_maxima,
                      watershed_clustering, gradient_based_clustering, cluster_thermal_image,
-                     Cluster, NavGoal, Frontier)
+                     Cluster, NavGoal, Frontier, relation_graph, query_vlm_with_images, QwenVLModel)
 
 from planning import Planning
 from vision_models.base_model import BaseModel
-from vision_models.yolo_world_detector import YOLOWorldDetector
+# from vision_models.yolo_world_detector import YOLOWorldDetector
 from onemap_utils import monochannel_to_inferno_rgb, log_map_rerun
 from config import Conf, load_config
 from config import SpotControllerConf
@@ -118,6 +118,7 @@ class Navigator:
     query_text: List[str]  # the query texts as a list. The first element will be used for planning and frontier score
     # computation
     query_text_features: torch.Tensor
+    full_query: str
     points_of_interest: List[Cluster]
     blacklisted_nav_goals: List[np.ndarray]
     nav_goals: List[NavGoal]
@@ -125,7 +126,7 @@ class Navigator:
 
     def __init__(self,
                  model: BaseModel,
-                 detector: YOLOWorldDetector,
+                 detector: None,
                  config: Conf
                  ) -> None:
 
@@ -203,6 +204,9 @@ class Navigator:
         self.class_map["bed"] = "bed"
         self.class_map["toilet"] = "toilet"
 
+        if not self.one_map.use_gpt:
+            self.vl_model = QwenVLModel()
+
     def reset(self):
         self.query_text = ["Other."]
         self.query_text_features = self.model.get_text_features(self.query_text).to(self.one_map.map_device)
@@ -261,13 +265,46 @@ class Navigator:
             self.previous_sims = None
             self.one_map.reset_checked_map()
             self.detector.set_classes([full_query])
-            if "lseg" in self.model._get_name().lower():
-                self.model.set_classes([full_query])
+            self.full_query = full_query
+            # self.detector.set_classes(self.query_text)
+            # if "lseg" in self.model._get_name().lower():
+            #     self.model.set_classes([full_query])
+            self.object_detected = False
+            self.get_map(False)
+
+    def set_query_feats(self,
+                  query_feats: np.ndarray,
+                  full_query: str
+                  ) -> None:
+        """
+        Sets the features for query image
+        :param txt: List of strings
+        :return:
+        """
+        # for t in txt:
+        #     if t in self.class_map:
+        #         txt[txt.index(t)] = self.class_map[t]
+        if full_query != self.query_text:
+            print(f"Setting query to {full_query}")
+            self.query_text = full_query
+            self.query_text_features = self.model.get_text_features([self.query_text[0]]).to(
+                self.one_map.map_device)
+                
+            self.previous_sims = None
+            self.one_map.reset_checked_map()
+            self.detector.set_classes([full_query])
+            self.full_query = full_query
+            # self.detector.set_classes(self.query_text)
+            # if "lseg" in self.model._get_name().lower():
+            #     self.model.set_classes([full_query])
             self.object_detected = False
             self.get_map(False)
     
-    def set_exploit(self) -> None:
-        self.enable_exploit = True
+    def set_exploit(self, value: bool = True) -> None:
+        self.enable_exploit = value
+
+    def get_exploit(self) -> bool:
+        return self.enable_exploit
 
     def get_path(self
                  ) -> Union[np.ndarray, str]:
@@ -537,7 +574,7 @@ class Navigator:
         a = time.time()
         image_features = self.model.get_image_features(image[np.newaxis, ...]).squeeze(0)
         b = time.time()
-        self.one_map.update(image_features, depth, odometry, self.artificial_obstacles)
+        self.one_map.update(image_features, depth, odometry, self.artificial_obstacles, self.query_text_features, np.array([px, py]), raw_image=image.transpose(1,2,0))
         c = time.time()
         self.get_map(False)
         d = time.time()
@@ -624,6 +661,11 @@ class Navigator:
                         top_map_projections = top_map[x_id, y_id]
                         if not np.any(top_map_projections):
                             object_valid = False
+                        else:
+                            # tally relation graph too
+                            check_found, node_map_locations = self.check_if_goal_found()
+                            if not check_found or np.linalg.norm(np.array(node_map_locations)-np.array([x_id[0], y_id[0]])) > 6:
+                                object_valid = False
 
                         if object_valid:
                             mask = top_map_projections
@@ -674,8 +716,12 @@ class Navigator:
         
         adjusted_score = self.previous_sims[0].cpu().numpy() + 1.0  # only positive scores
         if self.enable_exploit:
-            goal_w_highest_score = np.unravel_index(np.argmax(adjusted_score), adjusted_score.shape)
-            self.chosen_detection = (goal_w_highest_score[0], goal_w_highest_score[1])
+            check_found, node_map_locations = self.check_if_goal_found()
+            if not check_found:
+                self.enable_exploit = False
+            self.chosen_detection = node_map_locations
+            # goal_w_highest_score = np.unravel_index(np.argmax(adjusted_score), adjusted_score.shape)
+            # self.chosen_detection = (goal_w_highest_score[0], goal_w_highest_score[1])
 
         if self.log:
             conf_feats = (self.one_map.confidence_map > 0)
@@ -722,6 +768,79 @@ class Navigator:
             self.object_detected = False
             return True
         self.last_pose = (px, py, yaw)
+
+    def check_if_goal_found(self):
+        if self.one_map.store_raw_images:
+            # query vlm
+            image_groups = [list(v) for k, v in self.one_map.image_map.items() if k not in self.one_map.checked_image_map]
+            if len(image_groups) > 20:
+                start = 0
+                end = 20
+                for i in range(len(image_groups)//20):
+                    if self.one_map.use_gpt:
+                        responses = query_vlm_with_images(image_groups=image_groups[start:end], query_text=self.full_query)
+                    else:
+                        responses = self.vl_model.query_qwen_with_images(image_groups=image_groups[start:end], query=self.full_query)
+                    start += 20
+                    end += 20
+                    if "verdict" in responses:
+                        positive_results = responses["verdict"]
+                        if len(positive_results) == 0:
+                            self.one_map.checked_image_map.extend(list(self.one_map.image_map.keys()))    # mark checked
+                            return False, (-1, -1)
+                        positive_result_index = positive_results[0]
+                        return True, list(self.one_map.image_map.keys())[positive_result_index]
+                    self.one_map.checked_image_map.extend(list(self.one_map.image_map.keys()))    # mark checked
+                    return False, (-1, -1)
+            if self.one_map.use_gpt:
+                responses = query_vlm_with_images(image_groups=image_groups, query_text=self.full_query)
+            else:
+                responses = self.vl_model.query_qwen_with_images(image_groups=image_groups, query=self.full_query)
+            if "verdict" in responses:
+                positive_results = responses["verdict"]
+                if len(positive_results) == 0:
+                    self.one_map.checked_image_map.extend(list(self.one_map.image_map.keys()))    # mark checked
+                    return False, (-1, -1)
+                positive_result_index = positive_results[0]
+                return True, list(self.one_map.image_map.keys())[positive_result_index]
+            self.one_map.checked_image_map.extend(list(self.one_map.image_map.keys()))    # mark checked
+            return False, (-1, -1)
+        else:
+            # calculate similarity for relation graph
+            rel_graph = self.one_map.rel_graph
+            all_edges = rel_graph.relation_graph.edges(data=True)
+            if len(all_edges) > 0:
+                node_map_locations = []
+                sims = []
+                for e in all_edges:
+                    source = e[0]
+                    dest = e[1]
+                    relation_info = e[2]["info"]
+                    relations = list(relation_info.keys())
+                    relation_feats = self.model.get_text_features(relations).to(device=self.one_map.map_device)
+
+                    source_info = rel_graph.relation_graph.nodes(data=True)[source]["info"]
+                    node_map_locations.append(source_info["map_location"])
+                    source_feats = source_info["vis_feats"]
+                    dest_feats = rel_graph.relation_graph.nodes(data=True)[dest]["info"]["vis_feats"]
+                    node_feats = torch.stack([source_feats, dest_feats], axis=0)
+                    node_sim = torch.einsum('nc, nc -> n', node_feats, self.query_text_features[:2])
+                    node_sim = (node_sim + 1.0) / 2.0
+                    _feats = []
+                    for _feat in relation_feats:
+                        _feats.append(_feat)
+                    node_relation_feats = torch.stack(_feats, axis=0)
+                    rel_sim = torch.max(torch.einsum('nc, c -> n', node_relation_feats, self.query_text_features[2]))
+                    rel_sim = (rel_sim + 1.0) / 2.0
+                    sims.append(np.average((node_sim[0],node_sim[1],rel_sim), weights=[0.4, 0.4, 0.2]))
+
+                sim_max_ind = np.argmax(sims)
+                if sims[sim_max_ind] > 0.63:
+                    return True, (node_map_locations[sim_max_ind][0], node_map_locations[sim_max_ind][1])
+                else:
+                    return False, (-1, -1)
+            else:
+                return False, (-1, -1)
 
     def get_map(self,
                 return_map=True

@@ -21,7 +21,7 @@ from habitat.utils.visualizations.utils import tile_images
 import supervision as sv
 from PIL import Image
 
-SENSORS_TO_INCLUDE = ["rgb"]
+SENSORS_TO_INCLUDE = ["rgb", "depth"]
 
 def log_map_rerun(map_, path, needs_orientation=False):
     """
@@ -69,6 +69,21 @@ def monochannel_to_inferno_rgb(image: np.ndarray) -> np.ndarray:
     inferno_colormap = cv2.applyColorMap((normalized_image * 255).astype(np.uint8), cv2.COLORMAP_INFERNO)
 
     return inferno_colormap
+
+def monochannel_to_gray(image: np.ndarray) -> np.ndarray:
+    # Normalize the input image to the range [0, 1]
+    min_val, max_val = np.min(image), np.max(image)
+    peak_to_peak = max_val - min_val
+    if peak_to_peak == 0:
+        normalized_image = np.zeros_like(image)
+    else:
+        normalized_image = (image - min_val) / peak_to_peak
+
+    image = (normalized_image * 255).astype(np.uint8)
+    image = image[..., np.newaxis]
+    image = np.concatenate([image for _ in range(3)], axis=2)
+
+    return image
 
 def images_to_video(
     images: List[np.ndarray],
@@ -151,7 +166,7 @@ def append_text_underneath_image(image: np.ndarray, text: str):
     :return: A new image with text appended underneath.
     """
     h, w, c = image.shape
-    font_size = 1.5
+    font_size = 1.0
     font_thickness = 2
     font = cv2.FONT_HERSHEY_SIMPLEX
     blank_image = np.zeros(image.shape, dtype=np.uint8)
@@ -359,6 +374,152 @@ def add_sim_maps_to_image(observation: Dict, maps: Dict=None, info: Dict=None, t
                 )
                 render_frame = np.concatenate((render_frame, _image), axis=1)
 
+    ## append text
+    if len(text_to_append) > 0:
+        render_frame = append_text_underneath_image(render_frame, text_to_append)
+
+    return render_frame
+
+def add_sim_maps_to_image_paper(observation: Dict, maps: Dict=None, info: Dict=None, text_to_append: str = "") -> np.ndarray:
+    
+    font_size = 1.5
+    font_thickness = 2
+    font = cv2.FONT_HERSHEY_SIMPLEX
+
+    render_obs_images: List[np.ndarray] = []
+    for sensor_name in observation:
+        if sensor_name not in SENSORS_TO_INCLUDE:
+            continue
+
+        if isinstance(observation[sensor_name], np.ndarray) and len(observation[sensor_name].shape) > 1:
+            obs_k = observation[sensor_name]
+            if not isinstance(obs_k, np.ndarray):
+                obs_k = obs_k.cpu().numpy()
+            if len(obs_k.shape) == 3 and obs_k.shape[2] == 4:
+                obs_k = obs_k[:, :, :3]
+            if len(maps) > 0 and "draw_found_on_map" in maps:
+                goal_center = maps["draw_found_on_map"]
+                start_y, end_y, = goal_center[0] - 10, goal_center[0] + 10
+                start_x, end_x, = goal_center[1] - 10, goal_center[1] + 10
+                obs_k = cv2.rectangle(obs_k.astype(np.uint8), (start_x, start_y), (end_x, end_y), (128, 128, 0), thickness=2)
+
+            if sensor_name == "depth":
+                obs_k = observation['depth']
+                # mask = obs_k == float('inf')
+                # obs_k[mask] = obs_k[~mask].max()
+                obs_k *= 255.0/obs_k.max()
+                obs_k = obs_k[..., np.newaxis]
+                obs_k = np.concatenate([obs_k for _ in range(3)], axis=2)
+            
+            obs_k = obs_k.astype(np.uint8)
+            cv2.putText(
+                obs_k,
+                f"{sensor_name.capitalize()}",
+                (obs_k.shape[1]-400, obs_k.shape[0]-50),
+                font,
+                font_size,
+                (255,255,255),
+                font_thickness,
+                lineType=cv2.LINE_AA,
+            )
+            render_obs_images.append(obs_k)
+
+    shapes_are_equal = len(set(x.shape for x in render_obs_images)) == 1
+    if not shapes_are_equal:
+        render_frame = tile_images(render_obs_images)
+    else:
+        render_frame = np.concatenate(render_obs_images, axis=1)
+
+    ## add sim maps to the frame
+    if len(maps) > 0:
+        if "traversable_map" in maps:
+            _image = maps["traversable_map"]
+            new_img = np.ones((render_frame.shape[0], render_frame.shape[0], 3), dtype = np.uint8)
+            new_img = new_img * 255
+            mid_pt = render_frame.shape[0]//2
+            start_h = mid_pt - (_image.shape[0]//2)
+            start_w = mid_pt - (_image.shape[1]//2)
+            new_img[start_h: start_h + _image.shape[0], start_w: start_w + _image.shape[1], :] = _image
+            _image = new_img
+            # old_h, old_w, _ = _image.shape
+            # img_height = render_frame.shape[0]
+            # img_width = int(float(img_height) / old_h * old_w)
+            # # cv2 resize (dsize is width first)
+            # _image = cv2.resize(
+            #     _image,
+            #     (img_width, img_height),
+            #     interpolation=cv2.INTER_CUBIC,
+            # )
+            cv2.putText(
+                _image,
+                f"Traversable map",
+                (new_img.shape[1]-500, new_img.shape[0]-50),
+                font,
+                font_size,
+                (0, 0, 0),
+                font_thickness,
+                lineType=cv2.LINE_AA,
+            )
+            cv2.putText(
+                _image,
+                f"[agent in red]",
+                (new_img.shape[1]-400, new_img.shape[0]-10),
+                font,
+                0.8,
+                (0, 0, 0),
+                font_thickness,
+                lineType=cv2.LINE_AA,
+            )
+            render_frame = np.concatenate((render_frame, _image), axis=1)
+
+        next_layer_frames = []
+        if "sim_map_layers" in maps:
+            _images = maps["sim_map_layers"]
+            for i, _image in enumerate(_images):
+                # new_img = np.ones((render_frame.shape[0], render_frame.shape[0], 3), dtype = np.uint8)
+                # new_img = new_img * 255
+                # mid_pt = render_frame.shape[0]//2
+                # start_h = mid_pt - (_image.shape[0]//2)
+                # start_w = mid_pt - (_image.shape[1]//2)
+                # new_img[start_h: start_h + _image.shape[0], start_w: start_w + _image.shape[1], :] = _image
+                # _image = new_img
+                old_h, old_w, _ = _image.shape
+                img_height = render_frame.shape[0]
+                img_width = int(float(img_height) / old_h * old_w)
+                # cv2 resize (dsize is width first)
+                _image = cv2.resize(
+                    _image,
+                    (img_width, img_height),
+                    interpolation=cv2.INTER_CUBIC,
+                )
+                cv2.putText(
+                    _image,
+                    f"Layer {i+1}",
+                    (img_width-450, img_height-50),
+                    font,
+                    font_size,
+                    (0, 0, 0),
+                    font_thickness,
+                    lineType=cv2.LINE_AA,
+                )
+                next_layer_frames.append(_image)
+
+            shapes_are_equal = len(set(x.shape for x in next_layer_frames)) == 1
+            if not shapes_are_equal:
+                render_frame_next = tile_images(next_layer_frames)
+            else:
+                render_frame_next = np.concatenate(next_layer_frames, axis=1)
+
+            render_frame = np.concatenate((render_frame, render_frame_next), axis=0)
+
+    if ("called_found" in maps and maps["called_found"]) or ("ran_out_of_time" in maps and maps["ran_out_of_time"]):
+        rect_color = (255,0,0)
+        if "is_success" in maps and maps["is_success"]:
+            rect_color = (0,255,0)
+        start_y, end_y = 0, render_frame.shape[0]
+        start_x, end_x = 0, render_frame.shape[1]
+        render_frame = cv2.rectangle(render_frame, (start_x, start_y), (end_x, end_y), rect_color, thickness=20)
+        
     ## append text
     if len(text_to_append) > 0:
         render_frame = append_text_underneath_image(render_frame, text_to_append)

@@ -1,0 +1,32 @@
+EvalConf:
+  multi_object: True
+  max_steps: 500
+  max_explore_steps: 100
+  max_dist: 1.5
+  is_gibson: False
+  object_nav_path: "datasets/langmon/eval/langnav/langnav/test"
+  num_seq: 3
+  scene_path: "datasets/scene_datasets/fphab/"
+  results_path: "results_mlfm_vlm_ego_img/"
+  log_rerun: False
+  save_video: False
+  save_maps: False
+  use_pointnav: False
+  square_im: True
+  goal_query_type: "detailed" # "coarse", "fine", "detailed"
+  goal_query_processing: "extract_graph" #"extract_and_split_support" #"extract"
+
+config: [
+  ../mon/controller_habitat.yaml, # Default Habitat Controller
+  ../mon/mapping_conf_sim.yaml,       # Default Mapping Configuration
+  ../mon/planning_conf.yaml       # Default Planning Configuration
+]
+
+MappingConf:
+  layered: False
+  store_raw_images: True
+  images_to_store: 5
+  use_gpt: True
+
+PlanningConf:
+  use_detector: False

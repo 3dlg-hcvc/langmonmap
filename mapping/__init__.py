@@ -13,12 +13,17 @@ __all__ = [
     'get_frontier_midpoint',
     'cluster_high_similarity_regions','find_local_maxima', 'Cluster', 'NavGoal', 'Frontier',
     'watershed_clustering', 'gradient_based_clustering',
-    'cluster_thermal_image'
+    'cluster_thermal_image',
+    'query_vlm_with_images',
+    'QwenVLModel'
 ]
 
 from mapping.nav_goals.frontier import detect_frontiers, get_frontier_midpoint, Frontier
 
 from mapping.nav_goals.navigation_goals import NavGoal
+
+from mapping.querying_vlm_w_images import query_vlm_with_images
+from mapping.querying_qwen_w_images import QwenVLModel
 
 from mapping.nav_goals.clustering import cluster_high_similarity_regions, find_local_maxima, Cluster, watershed_clustering, gradient_based_clustering, cluster_thermal_image
 
@@ -28,6 +33,7 @@ from .varying_blur import gaussian_kernel, local_gaussian_blur, gaussian_kernel_
 from .feature_map import OneMap, FusionType, DenseProjectionType
 
 from .navigator import Navigator
+
 
 
 

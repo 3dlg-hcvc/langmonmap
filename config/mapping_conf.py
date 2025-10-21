@@ -29,4 +29,9 @@ class MappingConf:
     z_bins_step: float = 3.0
 
     probabilistic_fusion: bool = True
+    relation_graph_conf_threshold: float = 0.6
+
+    store_raw_images: bool = False
+    images_to_store: int = 1
+    use_gpt: bool = False
 
