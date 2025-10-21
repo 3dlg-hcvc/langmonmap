@@ -1,173 +1,104 @@
 <p align="center">
-  <img src="docs/sys.png" width="900", style="border-radius:10%">
-  <h1 align="center">One Map to Find Them All: Real-time Open-Vocabulary Mapping for Zero-shot Multi-Object Navigation</h1>
-  <h3 align="center">
-    <a href="https://www.kth.se/profile/flbusch?l=en">Finn Lukas Busch</a>,
-    <a href="https://www.kth.se/profile/timonh">Timon Homberger</a>,
-    <a href="https://www.kth.se/profile/jgop">Jesús Ortega-Peimbert</a>,
-    <a href="https://www.kth.se/profile/quantao?l=en">Quantao Yang</a>,
-    <a href="https://www.kth.se/profile/olovand" style="white-space: nowrap;"> Olov Andersson</a>
-  </h3>
-  <p align="center">
-    <a href="https://www.finnbusch.com/OneMap/">Project Website</a> , <a href="https://arxiv.org/pdf/2409.11764">Paper (arXiv)</a>
-  </p>
-</p>
+  <h1 align="center">MLFM: Multi-Layered Feature Maps for Richer Language Understanding in Zero-Shot Semantic Navigation</h1>
 
-This repository contains the code for the paper "One Map to Find Them All: Real-time Open-Vocabulary Mapping for
-Zero-shot Multi-Object Navigation". We provide a [dockerized environment](#setup-docker) to run the code or
-you can [run it locally](#setup-local-without-docker).
-
-In summary we open-source:
-- The OneMap mapping and navigation code
-- The evaluation code for single- and multi-object navigation
-- The multi-object navigation dataset and benchmark
-- The multi-object navigation dataset generation code, such that you can generate your own datasets
+This repository contains the code for the paper "MLFM: Multi-Layered Feature Maps for Richer Language Understanding in Zero-Shot Semantic Navigation". We add instructions on how to run the experiments reported in the paper. [[webpage]](https://3dlg-hcvc.github.io/langmonmap/)
 
 ## Abstract
-The capability to efficiently search for objects in complex environments is fundamental for many real-world robot 
-applications. Recent advances in open-vocabulary vision models have resulted in semantically-informed object navigation \
-methods that allow a robot to search for an arbitrary object without prior training. However, these 
-zero-shot methods have so far treated the environment as unknown for each consecutive query.
-In this paper we introduce a new benchmark for zero-shot multi-object navigation, allowing the robot to leverage
-information gathered from previous searches to more efficiently find new objects. To address this problem we build a
-reusable open-vocabulary feature map tailored for real-time object search. We further propose a probabilistic-semantic
-map update that mitigates common sources of errors in semantic feature extraction and leverage this semantic uncertainty
-for informed multi-object exploration. We evaluate our method on a set of object navigation tasks in both simulation
-as well as with a real robot, running in real-time on a Jetson Orin AGX. We demonstrate that it outperforms existing
-state-of-the-art approaches both on single and multi-object navigation tasks.
-## Setup (Docker)
-### 0. Docker 
-You will need to have Docker installed on your system. Follow the [official instructions](https://docs.docker.com/engine/install/ubuntu/) to install.
-You will also need to have the [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-installed and configured as docker runtime on your system.
+Recent progress in large vision-language models has driven improvements in language-based semantic navigation, where an embodied agent must reach a target object described in natural language. Yet we still lack a clear, language-focused evaluation framework to test how well agents ground the words in their instructions. We address this gap by proposing LangNav, an open-vocabulary multi-object navigation dataset with natural language goal descriptions (e.g. 'go to the red short candle on the table') and corresponding fine-grained linguistic annotations (e.g., attributes: color=red, size=short; relations: support=on). These labels enable systematic evaluation of language understanding. To evaluate on this setting, we extend multi-object navigation task setting to Language-guided Multi-Object Navigation (LaMoN), where the agent must find a sequence of goals specified using language. Furthermore, we propose Multi-Layered Feature Map (MLFM), a novel method that builds a queryable, multi-layered semantic map from pretrained vision-language features and proves effective for reasoning over fine-grained attributes and spatial relations in goal descriptions. Experiments on LangNav show that MLFM outperforms state-of-the-art zero-shot mapping-based navigation baselines.
+
+## Code setup
+We used Ubuntu 20.04.6 with cuda version 12.2 to install our code.
 
 ### 1. Clone the repository
 ```
 # https
-git clone https://github.com/KTH-RPL/OneMap.git
+git clone https://github.com/3dlg-hcvc/langmonmap.git
 # or ssh
-git clone git@github.com:KTH-RPL/OneMap.git
-cd OneMap/
-```
-### 2. Build the Docker Image
-The docker image build process will build habitat-sim and download model weights. You can choose to let the container
-download the habitat scenes during build, or if you have them already downloaded, you can set `HM3D=LOCAL` and provide
-the absolute `HM3D_PATH` to the `versioned_data` directory on your machine in the `.env` file in the root of the repository. 
-
-If you want the container to download the scenes for you, set `HM3D=FULL` in the `.env` file and provide your
-Matterport credentials. You can get access for Matterport for free [here](https://matterport.com/partners/meta).
-You will not need to provide a `HM3D_PATH` then.
-Having configured the `.env` file, you can build the docker image in the root of the repository with:
-```
-docker compose build
-```
-The build will take a while as `habitat-sim` is built from source. You can launch the docker container with:
-```
-bash run_docker.sh
-```
-and open a new terminal in the container with:
-```
-docker exec -it onemap-onemap-1 bash
-```
-## Setup (Local, without Docker)
-
-### 1. Clone the repository
-```
-# https
-git clone https://github.com/KTH-RPL/OneMap.git
-# or ssh
-git clone git@github.com:KTH-RPL/OneMap.git
-cd OneMap/
+git clone git@github.com:3dlg-hcvc/langmonmap.git
 ```
 ### 2. Install dependencies
+Create a conda environment
 ```
-python3 -m pip install gdown torch torchvision torchaudio meson
-python3 -m pip install -r requirements.txt
+# create conda environment
+conda create -n langnav python=3.9 cmake=3.14.0
+conda activate langnav
 ```
-Manually install newer `timm` version:
+
+Install Habitat-sim v0.2.5, following instructions from [here](https://github.com/facebookresearch/habitat-sim/tree/v0.2.5). In case you encounter issues with Habitat-sim installation, please refer [here](https://github.com/facebookresearch/habitat-sim/tree/v0.2.5?tab=readme-ov-file#common-testing-issues) or [here](https://github.com/facebookresearch/habitat-sim/issues) for common issues, or reach out to the Habitat team.
 ```
-python3 -m pip install --upgrade timm>=1.0.7
+conda install habitat-sim=0.2.5 -c conda-forge -c aihabitat
 ```
+
+Install Habitat-lab
+```
+python -m pip install habitat-lab==0.2.520230802
+python -m pip install habitat-baselines==0.2.520230802
+```
+
+Install dependencies
+```
+cd langmonmap
+python -m pip install -r requirements.txt
+python -m pip install --upgrade timm==1.0.15
+```
+
 YOLOV7:
 ```
 git clone https://github.com/WongKinYiu/yolov7
 ```
+
 Build planning utilities:
 ```
+sudo apt-get install libeigen3-dev
 python3 -m pip install ./planning_cpp/
 ```
+
 ### 3. Download the model weights
 ```
 mkdir -p weights/
 ```
-SED extracted weights:
-```
-gdown 1D_RE4lvA-CiwrP75wsL8Iu1a6NrtrP9T -O weights/clip.pth
-```
-YOLOV7 weights and MobileSAM weights:
-```
-wget https://github.com/WongKinYiu/yolov7/releases/download/v0.1/yolov7-e6e.pt -O weights/yolov7-e6e.pt
-wget https://github.com/ChaoningZhang/MobileSAM/raw/refs/heads/master/weights/mobile_sam.pt -O weights/mobile_sam.pt
-```
-### 4. Download the habitat data
+Download SED Clip weights, YOLOV7 weights and MobileSAM weights from [OneMap](https://github.com/KTH-RPL/OneMap?tab=readme-ov-file#3-download-the-model-weights) repository and place it under weights/.
 
+### 4. Download scenes data
+Follow instructions for Habitat Synthetic Scenes Dataset (HSSD) and download from [here](https://huggingface.co/datasets/hssd/hssd-hab).
+Link the scenes in ``datasets/scene_datasets/fphab/''.
+```
+mkdir -p datasets/scene_datasets
+cd datasets/scene_datasets
+ln -s <path_to_hssd> fphab
+```
+
+### Download LangNav dataset
+Follow HuggingFace [LangNav](https://huggingface.co/datasets/3dlg-hcvc/langnav) dataset to download the data splits.
+Place inside ``datasets/langnav''. Please refer to the HF [documentation](https://huggingface.co/docs/hub/en/datasets-downloading#using-git) to know more about downloading HF datasets.
 
 ## Running the code
-### 1. Run the example
-You can run the code on an example, visualized in [rerun.io](https://rerun.io/) with:
-#### Docker
-You will need to have [rerun.io](https://rerun.io/) installed on the host for visualization.
-Ensure the docker is running and you are in the container as described in the [Docker setup](#setup-docker). Then launch
-the rerun viewer **on the host** (not inside the docker) with:
+### 1. Run evaluation
+You can run the evaluation on the test split with:
 ```
-rerun
+python eval_mlfm.py --config config/lnav/mlfm_conf.yaml
 ```
-and launch the example in the container with:
-``` 
-python3 habitat_test.py --config/mon/base_conf_sim.yaml
+The evaluation run will save out the results in the `results/` directory. You can read the results with:
 ```
-#### Local
-Open the rerun viewer and example from the root of the repository with:
+python read_results_mlfm.py --config config/lnav/mlfm_conf.yaml
 ```
-rerun
-python3 habitat_test.py --config/mon/base_conf_sim.yaml
-```
-### 2. Run the evaluation
-You can reproduce the evaluation results from the paper for single- and multi-object navigation.
-#### Single-object navigation
-```
-python3 eval_habitat.py --config config/mon/eval_conf.yaml
-```
-This will run the evaluation and save the results in the `results/` directory. You can read the results with:
-```
-python3 read_results.py --config config/mon/eval_conf.yaml
-```
-#### Multi-object navigation
-```
-python3 eval_habitat_multi.py --config config/mon/eval_multi_conf.yaml
-```
-This will run the evaluation and save the results in the `results_multi/` directory. You can read the results with:
-```
-python3 read_results_multi.py --config config/mon/eval_multi_conf.yaml
-```
-#### Dataset generation
-While we provide the generated dataset for the evaluation of multi-object navigation, we also release the code to
-generate the datasets with varying parameters. You can generate the dataset with
-```
-python3 eval/dataset_utils/gen_multiobject_dataset.py
-```
-and change the parameters such as number of objects per episode in the corresponding file.
+#### Running experiments reported in the paper
+You can find all the yaml files under ``config/lnav/paper'' for running the experiments reported in the paper.
+
+### Acknowledgements
+Our repository is built on top of the open-sourced [OneMap repo](https://github.com/KTH-RPL/OneMap).
+We use assets from [HSSD](https://huggingface.co/datasets/hssd/hssd-hab) to build our dataset.
 
 ## Citation
 If you use this code in your research, please cite our paper:
 ```
-@misc{busch2024mapallrealtimeopenvocabulary,
-      title={One Map to Find Them All: Real-time Open-Vocabulary Mapping for Zero-shot Multi-Object Navigation}, 
-      author={Finn Lukas Busch and Timon Homberger and Jesús Ortega-Peimbert and Quantao Yang and Olov Andersson},
-      year={2024},
-      eprint={2409.11764},
+@misc{raychaudhuri2025mlfm,
+      title={MLFM: Multi-Layered Feature Maps for Richer Language Understanding in Zero-Shot Semantic Navigation}, 
+      author={Sonia Raychaudhuri and Enrico Cancelli and Tommaso Campari and Lamberto Ballan and Manolis Savva and Angel X. Chang},
+      year={2025},
+      eprint={2507.07299},
       archivePrefix={arXiv},
       primaryClass={cs.RO},
-      url={https://arxiv.org/abs/2409.11764}, 
+      url={https://arxiv.org/abs/2507.07299}, 
 }
 ```

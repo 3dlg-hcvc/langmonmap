@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>LangNavBench - Natural-Language Semantic Navigation</title>
+
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Project webpage of LangNavBench.">
+    <meta name="author" content="Sonia Raychaudhuri">
+    <meta name="keywords"
+        content="sfu cs, gruvi, 3dlg, embodied ai, multion, langnav, mlfm, langnavbench">
+    <title>LangNavBench</title>
+
+    <!--FACEBOOK-->
+    <meta property="og:image" content="https://3dlg-hcvc.github.io/langmonmap/assets/teaser.png">
+    <meta property="og:image:type" content="image/jpg">
+    <meta property="og:image:width" content="150">
+    <meta property="og:image:height" content="150">
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://3dlg-hcvc.github.io/langmonmap/" />
+    <meta property="og:title" content="LangNavBench" />
+    <meta property="og:description" content="Project webpage of LangNavBench." />
+
+    <!--TWITTER-->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="LangNavBench" />
+    <meta name="twitter:description" content="Project webpage of LangNavBench." />
+    <meta name="twitter:image" content="https://3dlg-hcvc.github.io/langmonmap/assets/teaser.png" />
+
+    <!-- Bootstrap core CSS -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
+
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.4.0/css/font-awesome.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.8.0/codemirror.min.css">
+
+    <link href="https://fonts.googleapis.com/css?family=Lato:400,400i|PT+Serif:700" rel="stylesheet">
+    <link rel="stylesheet" href="dist/css/style.css">
+    <link rel="stylesheet" href="dist/css/new_style.css">
+    <!-- <link rel="stylesheet" href="css/index.css" /> -->
+  </head>
+
+  <body class="is-boxed has-animations">
+    <div class="body-wrap boxed-container">
+      <!-- HEADER -->
+      <div class="header" id="header">
+        <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-center">
+          <h1>LangNavBench: Evaluation of Natural-Language Understanding in Semantic Navigation</h1>
+        </div>
+        <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-center">
+          
+          <a href="https://sonia-raychaudhuri.github.io" target="_blank">Sonia Raychaudhuri</a><sup>1</sup>
+          <a href="#" target="_blank">Enrico Cancelli</a><sup>2</sup>
+          <a href="https://www.tommasocampari.it/" target="_blank">Tommaso Campari</a><sup>3</sup>
+        
+        </div>
+        <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-center">
+          
+          <a href="https://www.lambertoballan.net/" target="_blank">Lamberto Ballan</a><sup>2</sup>
+          <a href="https://msavva.github.io/" target="_blank">Manolis Savva</a><sup>1</sup>
+          <a href="https://angelxuanchang.github.io/" target="_blank">Angel X. Chang</a><sup>1,4</sup>
+          
+        </div>
+        <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-center">
+          <span><sup>1</sup>Simon Fraser University, <sup>2</sup>University of Padova, <sup>3</sup>FBK, <sup>4</sup>Amii</span>
+        </div>
+        <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-center">
+          [<a href="https://github.com/3dlg-hcvc/langmonmap" target="_blank">GitHub</a>] [<a href="https://arxiv.org/abs/2507.07299" target="_blank">arXiv</a>]
+        </div>
+      </div>
+
+      <!-- MAIN -->
+      <main>
+        <div class="container">
+          <!-- HERO PNG (centered) -->
+          <div class="row">
+            <div class="has-top-divider">&nbsp;</div>
+            <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-center">
+                <img src="assets/teaser.png" class="img-responsive center-img" alt="teaser" />
+              </a>
+            </div>
+          </div>
+
+          <!-- ABSTRACT -->
+          <div class="row">
+            <h2>Abstract</h2>
+            <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-justify">
+              <p>Recent progress in large vision language models has driven improvements in language based semantic navigation, where an embodied agent must reach a target object described in natural language. Yet a clear, language focused benchmark for testing how well such agents ground the words in their instructions was missing. <b>LangNavBench</b> fills this gap by pairing a carefully curated open set dataset, <i>LangNav</i>, with an evaluation suite that probes grounding across attributes, spatial relations and category hierarchies. We further introduce <b>Multi Layered Feature Map (MLFM)</b>, a queryable semantic map that enables strong zero shot performance and outperforms state of the art mapping baselines.</p>
+            </div>
+          </div>
+
+          <div class="row">
+            <h2>Dataset: LangNav</h2>
+            <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-justify">
+              <img src="assets/dataset_examples.png" class="img-responsive center-img" alt="LangNav overview" />
+              <p class="text-justify">To implement LangNavBench, we introduce a new dataset, <strong>LangNav</strong>, where the goal objects are
+specified using language descriptions. Each episode contains three goals, disclosed to the agent one
+at a time rather than all at once. Revealing every target at the start would let the agent approach
+each object the moment it first appears, undermining our aim of testing how well it stores and reuses
+information gathered during exploration. The descriptions can detail an object with various amounts
+of specificity, for example 'Go to the couch' vs 'Go to the black couch' vs 'Go to the black three
+piece L-shaped sectional couch'. This allows us to evaluate the agent's capability to identify objects
+specified without any attribute as well as those specified by one or more attributes.</p>
+            </div>
+          </div>
+
+          <!-- APPROACH PNG -->
+          <div class="row">
+            <h2>Approach: MLFM</h2>
+            <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-justify">
+              <img src="assets/map_building.png" class="img-responsive center-img" alt="MLFM overview" />
+              <p class="text-justify">MLFM builds a multi layer top down semantic map that preserves vertical context without cubic memory cost. Each layer encodes CLIP features; goal descriptions are embedded once, then slide as convolutional kernels over the map to produce a similarity heat map. An Explore and Exploit policy leverages the heat map to decide between frontier exploration or directed navigation.</p>
+            </div>
+          </div>
+
+          <!-- RESULTS -->
+          <div class="row">
+            <h2>Results</h2>
+            <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-center">
+              <img src="assets/results.png" class="img-responsive center-img" alt="results" />
+              <p>MLFM attains <b>59% SR</b> plus thirty points over OneMap and bridges half the gap to oracle map agents, while requiring no training in LangNav environments.</p>
+              <img src="assets/ablation.png" class="img-responsive center-img" alt="ablation" />
+            </div>
+          </div>
+
+          <!-- ERROR MODES -->
+          <div class="row">
+            <h2>Error Modes</h2>
+            <img src="assets/failure_analysis.png"
+     class="img-responsive center-img"
+     style="max-width:350px;"
+     alt="ablation" />
+
+            <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-justify">
+              <p>Failures stem mostly from truncated exploration budgets or ambiguous language descriptions. Increasing map resolution and disambiguation queries are promising directions.</p>
+            </div>
+          </div>
+
+          <!-- CITATION -->
+          <div class="row">
+            <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12">
+              <h2>Citation</h2>
+              <pre xml:space="preserve" style="display:block;">
+@misc{raychaudhuri2025langnavbench,
+      title={LangNavBench: Evaluation of Natural Language Understanding in Semantic Navigation}, 
+      author={Sonia Raychaudhuri and Enrico Cancelli and Tommaso Campari and Lamberto Ballan and Manolis Savva and Angel X. Chang},
+      year={2025},
+      eprint={2507.07299},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2507.07299}, 
+}
+              </pre>
+            </div>
+          </div>
+
+          <!-- ACKNOWLEDGEMENTS -->
+          <div class="row">
+            <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12 text-justify">
+              <h2>Acknowledgements</h2>
+              <p>The members at SFU were supported by Canada CIFAR AI Chair and Canada Research Chair grants. Experiments at SFU were enabled by WestGrid and Compute Canada. TC was supported by the PNRR project Future AI Research (FAIR PE00000013). We thank the LangNav community beta testers for early feedback.</p>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.3/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.12.9/dist/umd/popper.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/js/bootstrap.min.js"></script>
+  </body>
+</html>

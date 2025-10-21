@@ -1,5 +1,6 @@
 numpy==1.24.0
 einops
+h5py
 salesforce-lavis
 rerun-sdk
 git+https://github.com/facebookresearch/detectron2.git

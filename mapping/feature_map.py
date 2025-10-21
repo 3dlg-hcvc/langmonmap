@@ -1051,7 +1051,7 @@ class OneMap:
         #                                 new_map.element_size() * new_map.values().shape[
         #                                     0] * self.feature_dim / 1024 / 1024))
         return torch.sparse_coo_tensor(all_ids, coalesced_scores, (self.n_cells, self.n_cells, 1), is_coalesced=True).cpu(), torch.sparse_coo_tensor(all_ids, coalesced_map_data, (self.n_cells, self.n_cells, self.feature_dim), is_coalesced=True).cpu(), obstacle_mapped.cpu(), obstcl_confidence_mapped.cpu()
-
+    
     @torch.no_grad()
     # @torch.compile
     def project_dense_layered(self,
