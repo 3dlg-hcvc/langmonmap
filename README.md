@@ -1,7 +1,7 @@
 <p align="center">
-  <h1 align="center">MLFM: Multi-Layered Feature Maps for Richer Language Understanding in Zero-Shot Semantic Navigation</h1>
+  <h1 align="center">Language-driven Multi-Object Navigation (LaMoN)</h1>
 
-This repository contains the code for the paper "MLFM: Multi-Layered Feature Maps for Richer Language Understanding in Zero-Shot Semantic Navigation". We add instructions on how to run the experiments reported in the paper. [[webpage]](https://3dlg-hcvc.github.io/langmonmap/)
+This repository contains the code for the paper "Language-driven Multi-Object Navigation (LaMoN)". We add instructions on how to run the experiments reported in the paper. [[webpage]](https://3dlg-hcvc.github.io/langmonmap/)
 
 ## Abstract
 Recent progress in large vision-language models has driven improvements in language-based semantic navigation, where an embodied agent must reach a target object described in natural language. Yet we still lack a clear, language-focused evaluation framework to test how well agents ground the words in their instructions. We address this gap by proposing LangNav, an open-vocabulary multi-object navigation dataset with natural language goal descriptions (e.g. 'go to the red short candle on the table') and corresponding fine-grained linguistic annotations (e.g., attributes: color=red, size=short; relations: support=on). These labels enable systematic evaluation of language understanding. To evaluate on this setting, we extend multi-object navigation task setting to Language-guided Multi-Object Navigation (LaMoN), where the agent must find a sequence of goals specified using language. Furthermore, we propose Multi-Layered Feature Map (MLFM), a novel method that builds a queryable, multi-layered semantic map from pretrained vision-language features and proves effective for reasoning over fine-grained attributes and spatial relations in goal descriptions. Experiments on LangNav show that MLFM outperforms state-of-the-art zero-shot mapping-based navigation baselines.
@@ -93,7 +93,7 @@ We use assets from [HSSD](https://huggingface.co/datasets/hssd/hssd-hab) to buil
 If you use this code in your research, please cite our paper:
 ```
 @misc{raychaudhuri2025mlfm,
-      title={MLFM: Multi-Layered Feature Maps for Richer Language Understanding in Zero-Shot Semantic Navigation}, 
+      title={Language-driven Multi-Object Navigation (LaMoN)}, 
       author={Sonia Raychaudhuri and Enrico Cancelli and Tommaso Campari and Lamberto Ballan and Manolis Savva and Angel X. Chang},
       year={2025},
       eprint={2507.07299},
